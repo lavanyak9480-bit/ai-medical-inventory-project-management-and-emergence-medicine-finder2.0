@@ -1,6 +1,16 @@
 # Dependencies
 node_modules/
 
+# Backend / Python
+backend/venv/
+backend/.env
+backend/medifind.db
+backend/uploads/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+
 # Production Build Output
 dist/
 dist-ssr/
