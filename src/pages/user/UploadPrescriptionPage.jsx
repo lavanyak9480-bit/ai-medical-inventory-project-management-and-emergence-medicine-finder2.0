@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   UploadCloud,
@@ -15,8 +15,48 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { SAMPLE_PRESCRIPTIONS } from '../../data/mockData';
-import { simulateOcrProcessing } from '../../utils/ocrSimulator';
 import { Badge } from '../../components/common/Badge';
+
+// Build a valid minimal PNG image with embedded tEXt metadata for sample prescriptions
+function createSamplePngFile(filename, prescriptionText) {
+  const crcTable = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    crcTable[n] = c >>> 0;
+  }
+  const crc32 = (buf) => {
+    let c = 0xffffffff;
+    for (let i = 0; i < buf.length; i++) {
+      c = crcTable[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+    }
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const makeChunk = (type, dataBytes) => {
+    const out = new Uint8Array(12 + dataBytes.length);
+    const dv = new DataView(out.buffer);
+    dv.setUint32(0, dataBytes.length, false);
+    for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+    out.set(dataBytes, 8);
+    const crcInput = out.slice(4, 8 + dataBytes.length);
+    dv.setUint32(8 + dataBytes.length, crc32(crcInput), false);
+    return out;
+  };
+
+  // Valid 1x1 white PNG + tEXt chunk carrying sample clinical text
+  const sig = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = makeChunk('IHDR', new Uint8Array([0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]));
+  const textPayload = new TextEncoder().encode(`PrescriptionText\0${prescriptionText}`);
+  const tEXt = makeChunk('tEXt', textPayload);
+  // zlib-compressed 1x1 RGB row (filter=0, R=255, G=255, B=255)
+  const idat = makeChunk('IDAT', new Uint8Array([0x78, 0x9c, 0x63, 0xf8, 0xff, 0xff, 0x3f, 0x00, 0x05, 0xfe, 0x02, 0xfe]));
+  const iend = makeChunk('IEND', new Uint8Array([]));
+
+  const blob = new Blob([sig, ihdr, tEXt, idat, iend], { type: 'image/png' });
+  return new File([blob], filename, { type: 'image/png' });
+}
 
 export function UploadPrescriptionPage() {
   const { uploadPrescription } = useApp();
@@ -33,16 +73,33 @@ export function UploadPrescriptionPage() {
   const [extractedMedicines, setExtractedMedicines] = useState(null);
   const [submittedRx, setSubmittedRx] = useState(null);
   const [error, setError] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
 
-  // Handle local file selection
-  const handleFileChange = (e) => {
-    const file = e.target.files?.[0];
+  useEffect(() => {
+    return () => {
+      if (previewUrl && previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  const processSelectedFile = (file) => {
     if (!file) return;
 
-    // Check supported format: JPG, PNG, PDF
+    // Check supported format: JPG, JPEG, PNG, PDF and max size 10 MB
     const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
-    if (!validTypes.includes(file.type)) {
-      setError('Please upload a valid JPG, PNG, or PDF file.');
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    const validExts = ['jpg', 'jpeg', 'png', 'pdf'];
+    if (!validTypes.includes(file.type) && !validExts.includes(ext)) {
+      setError('Please upload a valid JPG, JPEG, PNG, or PDF file.');
+      return;
+    }
+    if (file.size <= 0) {
+      setError('Uploaded file is empty. Please choose a valid prescription file.');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError('File size exceeds 10 MB limit.');
       return;
     }
 
@@ -50,7 +107,7 @@ export function UploadPrescriptionPage() {
     setSelectedSample(null);
     setSelectedFile(file);
 
-    if (file.type.startsWith('image/')) {
+    if (file.type.startsWith('image/') || ['jpg', 'jpeg', 'png'].includes(ext)) {
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
     } else {
@@ -63,12 +120,35 @@ export function UploadPrescriptionPage() {
     setSubmittedRx(null);
   };
 
+  // Handle local file selection
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    processSelectedFile(file);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer?.files?.[0];
+    processSelectedFile(file);
+  };
+
   // Handle Sample selection for immediate quick testing
   const handleSelectSample = (sample) => {
     setError('');
     setSelectedFile({
-      name: `${sample.id}.jpg`,
-      type: 'image/jpeg',
+      name: `${sample.id}.png`,
+      type: 'image/png',
       size: 1024 * 850
     });
     setPreviewUrl(sample.previewUrl);
@@ -86,7 +166,7 @@ export function UploadPrescriptionPage() {
     setError('');
   };
 
-  // Run OCR processing
+  // Run OCR processing via Backend API
   const handleStartOcr = async () => {
     if (!selectedFile) {
       setError('Please upload a prescription or choose a sample to process.');
@@ -95,27 +175,29 @@ export function UploadPrescriptionPage() {
 
     setIsProcessing(true);
     setError('');
+    setOcrProgress({ percentage: 35, message: 'Uploading prescription to backend OCR service...' });
 
     try {
-      const results = await simulateOcrProcessing(selectedSample, (progress) => {
-        setOcrProgress(progress);
-      });
+      let fileToUpload = selectedFile;
+      if (selectedSample && !(selectedFile instanceof File)) {
+        // Convert sample test card into a valid PNG File with embedded clinical sample text
+        const isUnclear = selectedSample.id === 'sample-rx-3';
+        const sampleLines = isUnclear
+          ? 'Azithromycin 500mg once daily 3 days\nblurry unclear handwritten line'
+          : (selectedSample.extractedMedicines || [])
+              .map(m => `${m.name} ${m.strength} ${m.frequency} ${m.duration}`)
+              .join('\n');
+        fileToUpload = createSamplePngFile(`${selectedSample.id}.png`, sampleLines);
+      }
 
-      setExtractedMedicines(results);
+      setOcrProgress({ percentage: 70, message: 'Running OCR text extraction & saving prescription...' });
+      const rxRecord = await uploadPrescription(fileToUpload);
+      setOcrProgress({ percentage: 100, message: 'Extraction complete. Pending pharmacist verification.' });
 
-      // Save as prescription in context with status "Pending Verification"
-      // OCR must not automatically approve a prescription
-      const rxRecord = uploadPrescription({
-        fileName: selectedFile.name,
-        fileType: selectedFile.type,
-        fileSize: `${(selectedFile.size / 1024).toFixed(1)} KB`,
-        fileUrl: previewUrl,
-        medicines: results
-      });
-
+      setExtractedMedicines(rxRecord.medicines || []);
       setSubmittedRx(rxRecord);
     } catch (err) {
-      setError('OCR extraction failed. Please try again.');
+      setError(err.message || 'OCR extraction failed. Please try again.');
     } finally {
       setIsProcessing(false);
     }
@@ -160,7 +242,16 @@ export function UploadPrescriptionPage() {
             </h2>
 
             {/* Drag & Drop Input */}
-            <label className="border-2 border-dashed border-slate-300 hover:border-emerald-500 rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-colors bg-slate-50/50 hover:bg-emerald-50/20">
+            <label
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-colors ${
+                isDragging
+                  ? 'border-emerald-500 bg-emerald-50/50'
+                  : 'border-slate-300 hover:border-emerald-500 bg-slate-50/50 hover:bg-emerald-50/20'
+              }`}
+            >
               <input
                 type="file"
                 accept=".jpg,.jpeg,.png,.pdf"

@@ -31,7 +31,15 @@ import { ExpiryAlertsPage } from '../pages/admin/ExpiryAlertsPage';
 
 // Protected Route for Regular Users
 function ProtectedUserRoute({ children }) {
-  const { role } = useApp();
+  const { role, authLoading } = useApp();
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-sm text-slate-500">
+        Verifying session...
+      </div>
+    );
+  }
 
   if (!role) {
     return <Navigate to="/login" replace />;
@@ -46,7 +54,15 @@ function ProtectedUserRoute({ children }) {
 
 // Protected Route for Main Admin Only
 function ProtectedAdminRoute({ children }) {
-  const { role } = useApp();
+  const { role, authLoading } = useApp();
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-sm text-slate-500">
+        Verifying admin session...
+      </div>
+    );
+  }
 
   if (!role) {
     return <Navigate to="/login" replace />;

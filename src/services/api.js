@@ -22,21 +22,21 @@ export const setAuthToken = (token) => {
 // Core request wrapper with automatic Bearer token injection
 async function request(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`;
-  const headers = options.headers || {};
+  const headers = { ...(options.headers || {}) };
 
   const token = getAuthToken();
   if (token && !headers['Authorization']) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  // If body is not FormData, default to application/json
-  if (options.body && !(options.body instanceof FormData)) {
+  let body = options.body;
+  if (body && !(body instanceof FormData)) {
     headers['Content-Type'] = 'application/json';
-    options.body = JSON.stringify(options.body);
+    body = JSON.stringify(body);
   }
 
   try {
-    const res = await fetch(url, { ...options, headers });
+    const res = await fetch(url, { ...options, headers, body });
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
@@ -59,7 +59,6 @@ async function request(endpoint, options = {}) {
 // ============================================================================
 
 export const authAPI = {
-  // Login: returns { token, user: { id, full_name, email, role } }
   login: async (email, password) => {
     const res = await request('/auth/login', {
       method: 'POST',
@@ -71,53 +70,72 @@ export const authAPI = {
     return res;
   },
 
-  // Register User: role is strictly 'User'
   register: async (userData) => {
     const res = await request('/auth/register', {
       method: 'POST',
       body: userData
     });
+    if (res.token) {
+      setAuthToken(res.token);
+    }
     return res;
   },
 
-  // Current session details
   getMe: async () => {
     return await request('/auth/me');
   },
 
-  // Logout
   logout: async () => {
     try {
-      await request('/auth/logout', { method: 'POST' });
+      if (getAuthToken()) {
+        await request('/auth/logout', { method: 'POST' });
+      }
+    } catch {
+      // Ignore network/token errors on logout
     } finally {
       setAuthToken(null);
     }
   }
 };
 
+export const userAPI = {
+  getProfile: async () => {
+    return await request('/users/profile');
+  },
+
+  updateProfile: async (profileData) => {
+    return await request('/users/profile', {
+      method: 'PUT',
+      body: profileData
+    });
+  }
+};
+
 // ============================================================================
-// 2. MEDICINE APIS (CRUD & MULTI-PHARMACY COMPARISON)
+// 2. PHARMACY & MEDICINE APIS (CRUD & MULTI-PHARMACY COMPARISON)
 // ============================================================================
 
+export const pharmacyAPI = {
+  getAll: async () => {
+    return await request('/pharmacies');
+  }
+};
+
 export const medicineAPI = {
-  // List all medicines
   getAll: async (search = '') => {
     const query = search ? `?search=${encodeURIComponent(search)}` : '';
     return await request(`/medicines${query}`);
   },
 
-  // Get medicine details
   getById: async (id) => {
     return await request(`/medicines/${id}`);
   },
 
-  // Dual-Pharmacy Price & Stock Comparison
   compare: async (search = '') => {
     const query = search ? `?search=${encodeURIComponent(search)}` : '';
     return await request(`/medicines/compare${query}`);
   },
 
-  // Admin: Add medicine (supports pharmacy: 'A', 'B', or 'Both')
   create: async (medicineData) => {
     return await request('/medicines', {
       method: 'POST',
@@ -125,7 +143,6 @@ export const medicineAPI = {
     });
   },
 
-  // Admin: Update medicine details
   update: async (id, medicineData) => {
     return await request(`/medicines/${id}`, {
       method: 'PUT',
@@ -133,7 +150,6 @@ export const medicineAPI = {
     });
   },
 
-  // Admin: Delete medicine
   delete: async (id) => {
     return await request(`/medicines/${id}`, {
       method: 'DELETE'
@@ -146,22 +162,19 @@ export const medicineAPI = {
 // ============================================================================
 
 export const inventoryAPI = {
-  // All active batches
-  getAll: async () => {
-    return await request('/inventory');
+  getAll: async (search = '') => {
+    const query = search ? `?search=${encodeURIComponent(search)}` : '';
+    return await request(`/inventory${query}`);
   },
 
-  // Pharmacy A Inventory
   getPharmacyA: async () => {
     return await request('/inventory/pharmacy-a');
   },
 
-  // Pharmacy B Inventory
   getPharmacyB: async () => {
     return await request('/inventory/pharmacy-b');
   },
 
-  // Update specific batch (quantity, price, expiry date)
   updateBatch: async (inventoryId, batchData) => {
     return await request(`/inventory/${inventoryId}`, {
       method: 'PUT',
@@ -169,7 +182,6 @@ export const inventoryAPI = {
     });
   },
 
-  // Delete inventory batch
   deleteBatch: async (inventoryId) => {
     return await request(`/inventory/${inventoryId}`, {
       method: 'DELETE'
@@ -182,7 +194,6 @@ export const inventoryAPI = {
 // ============================================================================
 
 export const prescriptionAPI = {
-  // Upload prescription file (JPG, PNG, PDF) with Tesseract OCR extraction
   upload: async (file) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -192,24 +203,26 @@ export const prescriptionAPI = {
     });
   },
 
-  // User's own prescriptions
   getMyPrescriptions: async () => {
     return await request('/prescriptions/my');
   },
 
-  // Admin: All uploaded prescriptions across users
   getAll: async () => {
     return await request('/prescriptions/all');
   },
 
-  // Admin: Verify prescription
-  verify: async (prescriptionId) => {
+  verify: async (prescriptionId, notes, confirmedMedicines = null) => {
+    const body = {};
+    if (notes) body.notes = notes;
+    if (Array.isArray(confirmedMedicines) && confirmedMedicines.length > 0) {
+      body.confirmed_medicines = confirmedMedicines;
+    }
     return await request(`/prescriptions/${prescriptionId}/verify`, {
-      method: 'POST'
+      method: 'POST',
+      body
     });
   },
 
-  // Admin: Reject prescription with reason
   reject: async (prescriptionId, reason) => {
     return await request(`/prescriptions/${prescriptionId}/reject`, {
       method: 'POST',
@@ -217,9 +230,25 @@ export const prescriptionAPI = {
     });
   },
 
-  // URL for prescription file download/preview
   getFileUrl: (filename) => {
-    return `${API_BASE_URL}/prescriptions/file/${filename}`;
+    if (!filename) return null;
+    return `${API_BASE_URL}/prescriptions/file/${encodeURIComponent(filename)}`;
+  },
+
+  fetchFileBlob: async (filename) => {
+    if (!filename) return null;
+    const token = getAuthToken();
+    const res = await fetch(`${API_BASE_URL}/prescriptions/file/${encodeURIComponent(filename)}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+    if (!res.ok) {
+      throw new Error(`Unable to load prescription file (${res.status})`);
+    }
+    const blob = await res.blob();
+    return {
+      blobUrl: URL.createObjectURL(blob),
+      contentType: blob.type || ''
+    };
   }
 };
 
@@ -228,34 +257,34 @@ export const prescriptionAPI = {
 // ============================================================================
 
 export const orderAPI = {
-  // Place separate order for Pharmacy A or Pharmacy B
   create: async (orderPayload) => {
-    // orderPayload: { pharmacy: 'Pharmacy A', items: [{ inventory_id, quantity }], delivery_address }
     return await request('/orders', {
       method: 'POST',
       body: orderPayload
     });
   },
 
-  // User's own orders
   getMyOrders: async () => {
     return await request('/orders/my');
   },
 
-  // Admin: All orders
   getAll: async () => {
     return await request('/orders/all');
   },
 
-  // Demo PhonePe Payment Simulation (deducts inventory stock once)
-  simulatePayment: async (orderId) => {
+  simulatePayment: async (orderId, status = 'Paid') => {
     return await request(`/orders/${orderId}/pay`, {
       method: 'POST',
-      body: { status: 'Paid' }
+      body: { status }
     });
   },
 
-  // Admin: Update order status (5-stage progression)
+  cancel: async (orderId) => {
+    return await request(`/orders/${orderId}/cancel`, {
+      method: 'POST'
+    });
+  },
+
   updateStatus: async (orderId, status) => {
     return await request(`/orders/${orderId}/status`, {
       method: 'PUT',
@@ -269,17 +298,14 @@ export const orderAPI = {
 // ============================================================================
 
 export const adminAPI = {
-  // 4 Core Summary Cards
   getDashboard: async () => {
     return await request('/admin/dashboard');
   },
 
-  // Registered users list
   getUsers: async () => {
     return await request('/admin/users');
   },
 
-  // Expiry & stock alerts
   getAlerts: async () => {
     return await request('/alerts/all');
   },
@@ -299,6 +325,8 @@ export const adminAPI = {
 
 export default {
   auth: authAPI,
+  user: userAPI,
+  pharmacy: pharmacyAPI,
   medicine: medicineAPI,
   inventory: inventoryAPI,
   prescription: prescriptionAPI,

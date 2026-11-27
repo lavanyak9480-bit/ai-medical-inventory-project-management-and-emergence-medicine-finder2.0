@@ -26,6 +26,7 @@ class Prescription(db.Model):
             'user_id': self.user_id,
             'user_name': self.user.full_name if self.user else None,
             'file_name': self.file_name,
+            'file_path': self.file_path,
             'file_type': self.file_type,
             'file_size': self.file_size,
             'status': self.status,

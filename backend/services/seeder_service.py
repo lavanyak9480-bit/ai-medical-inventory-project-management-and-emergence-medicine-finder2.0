@@ -6,6 +6,7 @@ from models.medicine import Medicine
 from models.inventory import Inventory
 from models.prescription import Prescription, PrescriptionMedicine
 from models.order import Order, OrderItem
+from utils.medicine_images import resolve_medicine_image
 
 def seed_initial_data():
     """
@@ -152,6 +153,26 @@ def seed_initial_data():
                     # Expired batch test! Expired date before 2026-11-24
                     {"pharmacy": "Pharmacy A", "batch": "CRS-2025-A1", "qty": 12, "price": 85.0, "mfg": "2025-05-10", "exp": "2026-10-15"},
                 ]
+            },
+            {
+                "name": "Insulin Glargine",
+                "generic_name": "Insulin Glargine recombinant",
+                "strength": "100IU/ml",
+                "form": "Injection",
+                "prescription_required": True,
+                "batches": [
+                    {"pharmacy": "Pharmacy B", "batch": "INS-2026-B5", "qty": 24, "price": 590.0, "mfg": "2026-04-01", "exp": "2027-01-15"},
+                ]
+            },
+            {
+                "name": "Diclofenac Gel",
+                "generic_name": "Diclofenac Diethylamine",
+                "strength": "30g",
+                "form": "Ointment",
+                "prescription_required": False,
+                "batches": [
+                    {"pharmacy": "Pharmacy A", "batch": "DIC-2026-A4", "qty": 5, "price": 65.0, "mfg": "2025-12-10", "exp": "2027-05-20"},
+                ]
             }
         ]
 
@@ -161,7 +182,8 @@ def seed_initial_data():
                 generic_name=item["generic_name"],
                 strength=item["strength"],
                 form=item["form"],
-                prescription_required=item["prescription_required"]
+                prescription_required=item["prescription_required"],
+                image_url=resolve_medicine_image(item["name"], item["strength"], item["form"])
             )
             db.session.add(med)
             db.session.flush()
@@ -175,10 +197,23 @@ def seed_initial_data():
                     quantity=b["qty"],
                     price=b["price"],
                     mfg_date=date.fromisoformat(b["mfg"]) if b.get("mfg") else None,
-                    expiry_date=date.fromisoformat(b["exp"])
+                    expiry_date=date.fromisoformat(b["exp"]),
+                    data_source='Seeded Sample'
                 )
                 db.session.add(inv)
 
+        db.session.commit()
+
+    # 4. Import Pharmacy A & Pharmacy B PDF catalogs (idempotent, preserves missing fields as NULL)
+    from services.catalog_importer import import_pharmacy_catalogs
+    import_pharmacy_catalogs()
+
+    # 5. Backfill image_url for any existing medicines missing an image
+    updated_imgs = False
+    for med in Medicine.query.filter((Medicine.image_url.is_(None)) | (Medicine.image_url == '')).all():
+        med.image_url = resolve_medicine_image(med.name, med.strength, med.form)
+        updated_imgs = True
+    if updated_imgs:
         db.session.commit()
 
 def import_medicines_from_data(records):
@@ -203,7 +238,8 @@ def import_medicines_from_data(records):
                 generic_name=rec.get('generic_name', ''),
                 strength=rec['strength'],
                 form=rec.get('form', 'Tablet'),
-                prescription_required=bool(rec.get('prescription_required', False))
+                prescription_required=bool(rec.get('prescription_required', False)),
+                image_url=rec.get('image_url') or resolve_medicine_image(rec['name'], rec['strength'], rec.get('form', 'Tablet'))
             )
             db.session.add(med)
             db.session.flush()

@@ -1,5 +1,6 @@
 from datetime import datetime
 from . import db
+from utils.medicine_images import resolve_medicine_image
 
 class Order(db.Model):
     __tablename__ = 'orders'
@@ -22,15 +23,23 @@ class Order(db.Model):
 
     def to_dict(self):
         stages = ["Order Placed", "Verification", "Preparing", "Dispatched", "Delivered"]
-        current_idx = stages.index(self.order_status) if self.order_status in stages else 0
+        is_cancelled = self.order_status == 'Cancelled'
+        current_idx = stages.index(self.order_status) if self.order_status in stages else -1
 
         tracking_updates = []
         for idx, st in enumerate(stages):
-            tracking_updates.append({
-                'stage': st,
-                'done': idx <= current_idx,
-                'time': self.created_at.strftime('%b %d, %I:%M %p') if idx == 0 else ('Completed' if idx < current_idx else ('Current' if idx == current_idx else 'Pending'))
-            })
+            if is_cancelled:
+                tracking_updates.append({
+                    'stage': st,
+                    'done': False,
+                    'time': 'Cancelled'
+                })
+            else:
+                tracking_updates.append({
+                    'stage': st,
+                    'done': idx <= current_idx,
+                    'time': self.created_at.strftime('%b %d, %I:%M %p') if idx == 0 else ('Completed' if idx < current_idx else ('Current' if idx == current_idx else 'Pending'))
+                })
 
         return {
             'id': self.id,
@@ -57,19 +66,25 @@ class OrderItem(db.Model):
     order_id = db.Column(db.String(50), db.ForeignKey('orders.id', ondelete='CASCADE'), nullable=False)
     inventory_id = db.Column(db.Integer, db.ForeignKey('inventory.id', ondelete='SET NULL'), nullable=True)
     medicine_name = db.Column(db.String(150), nullable=False)
-    strength = db.Column(db.String(50), nullable=False)
+    strength = db.Column(db.String(80), nullable=True)
     quantity = db.Column(db.Integer, nullable=False, default=1)
     unit_price = db.Column(db.Float, nullable=False)
     subtotal = db.Column(db.Float, nullable=False)
 
+    inventory = db.relationship('Inventory', lazy=True)
+
     def to_dict(self):
+        med = self.inventory.medicine if self.inventory and self.inventory.medicine else None
+        image_url = med.get_image_url() if med else resolve_medicine_image(self.medicine_name, self.strength, None)
         return {
             'id': self.id,
             'order_id': self.order_id,
             'inventory_id': self.inventory_id,
-            'name': f"{self.medicine_name} {self.strength}",
+            'name': f"{self.medicine_name} {self.strength}".strip() if self.strength else self.medicine_name,
             'medicine_name': self.medicine_name,
             'strength': self.strength,
+            'form': med.form if med else None,
+            'image_url': image_url,
             'quantity': self.quantity,
             'unit_price': float(self.unit_price),
             'price': float(self.unit_price),

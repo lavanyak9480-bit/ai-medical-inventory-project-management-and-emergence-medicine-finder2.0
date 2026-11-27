@@ -20,11 +20,13 @@ export function Badge({ variant = 'default', children, className = '' }) {
     'Preparing': 'bg-amber-50 text-amber-700 border-amber-200',
     'Dispatched': 'bg-cyan-50 text-cyan-700 border-cyan-200',
     'Delivered': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    'Cancelled': 'bg-rose-50 text-rose-700 border-rose-200',
 
     // Payment Status
     'Paid': 'bg-emerald-50 text-emerald-700 border-emerald-200',
     'Pending': 'bg-amber-50 text-amber-700 border-amber-200',
     'Failed': 'bg-rose-50 text-rose-700 border-rose-200',
+    'Refunded (Demo)': 'bg-purple-50 text-purple-700 border-purple-200',
 
     // Pharmacies
     'Pharmacy A': 'bg-emerald-100 text-emerald-800 border-emerald-300 font-semibold',
@@ -48,6 +50,9 @@ export function Badge({ variant = 'default', children, className = '' }) {
 }
 
 export function StockBadge({ quantity }) {
+  if (quantity === null || quantity === undefined) {
+    return <Badge variant="warning">Stock Missing</Badge>;
+  }
   if (quantity <= 0) {
     return <Badge variant="out-of-stock">Out of Stock</Badge>;
   }

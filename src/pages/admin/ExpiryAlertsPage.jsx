@@ -2,16 +2,26 @@ import React, { useState } from 'react';
 import { AlertTriangle, Clock, ShieldAlert, AlertCircle, Building2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Badge } from '../../components/common/Badge';
+import { MedicineImage } from '../../components/common/MedicineImage';
+import { MedicineDetailsModal } from '../../components/common/MedicineDetailsModal';
 import { formatDate, isExpired, isNearExpiry, getDaysUntilExpiry } from '../../utils/dateUtils';
 
 export function ExpiryAlertsPage() {
-  const { medicines } = useApp();
+  const { alertsData, medicines } = useApp();
   const [activeTab, setActiveTab] = useState('ALL'); // 'ALL' | 'EXPIRED' | 'NEAR_EXPIRY' | 'LOW_STOCK'
+  const [detailsMedicine, setDetailsMedicine] = useState(null);
 
-  // Categorize alerts
-  const expiredList = medicines.filter(m => isExpired(m.expiryDate));
-  const nearExpiryList = medicines.filter(m => isNearExpiry(m.expiryDate) && !isExpired(m.expiryDate));
-  const lowStockList = medicines.filter(m => m.quantity < 20);
+  // Use backend /api/alerts/all lists when available
+  const hasServerAlerts = Boolean(alertsData && alertsData.counts && Object.keys(alertsData.counts).length > 0);
+  const expiredList = hasServerAlerts
+    ? (alertsData.expired || [])
+    : medicines.filter(m => m.expiryDate && isExpired(m.expiryDate));
+  const nearExpiryList = hasServerAlerts
+    ? (alertsData.near_expiry || [])
+    : medicines.filter(m => m.expiryDate && isNearExpiry(m.expiryDate) && !isExpired(m.expiryDate));
+  const lowStockList = hasServerAlerts
+    ? (alertsData.low_stock || [])
+    : medicines.filter(m => m.quantity !== null && m.quantity !== undefined && m.quantity < 20);
 
   // Filtered view
   const displayList = React.useMemo(() => {
@@ -103,7 +113,7 @@ export function ExpiryAlertsPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-slate-200 text-xs font-semibold space-x-4">
+      <div className="flex flex-wrap border-b border-slate-200 text-xs font-semibold gap-x-4 gap-y-2">
         {[
           { key: 'ALL', label: `All Alerts (${expiredList.length + nearExpiryList.length + lowStockList.length})` },
           { key: 'EXPIRED', label: `Expired (${expiredList.length})` },
@@ -142,14 +152,32 @@ export function ExpiryAlertsPage() {
               {displayList.map((med) => {
                 const expired = isExpired(med.expiryDate);
                 const nearExp = isNearExpiry(med.expiryDate) && !expired;
-                const low = med.quantity < 20;
+                const low = med.quantity !== null && med.quantity !== undefined && med.quantity < 20;
                 const daysRemaining = getDaysUntilExpiry(med.expiryDate);
 
                 return (
                   <tr key={med.id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="px-4 py-3.5">
-                      <p className="font-bold text-slate-800 text-sm">{med.name}</p>
-                      <p className="text-slate-400 text-[11px]">{med.strength} • {med.form}</p>
+                      <div className="flex items-center space-x-3">
+                        <MedicineImage
+                          imageUrl={med.imageUrl}
+                          name={med.name}
+                          strength={med.strength}
+                          form={med.form}
+                          size="sm"
+                          onClick={() => setDetailsMedicine(med)}
+                        />
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => setDetailsMedicine(med)}
+                            className="font-bold text-slate-800 text-sm hover:text-emerald-700 text-left transition-colors"
+                          >
+                            {med.name}
+                          </button>
+                          <p className="text-slate-400 text-[11px]">{med.strength || 'Strength not specified'} • {med.form}</p>
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-3.5">
                       <Badge variant={med.pharmacy}>{med.pharmacy}</Badge>
@@ -205,6 +233,13 @@ export function ExpiryAlertsPage() {
           </table>
         </div>
       </div>
+
+      <MedicineDetailsModal
+        isOpen={Boolean(detailsMedicine)}
+        onClose={() => setDetailsMedicine(null)}
+        medicine={detailsMedicine}
+        mode="inventory"
+      />
     </div>
   );
 }

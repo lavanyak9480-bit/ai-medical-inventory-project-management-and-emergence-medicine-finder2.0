@@ -1,23 +1,47 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { QrCode, CheckCircle2, AlertCircle, ArrowLeft, ShieldCheck, Smartphone } from 'lucide-react';
+import { QrCode, CheckCircle2, AlertCircle, ArrowLeft, ShieldCheck, Smartphone, XCircle, RefreshCw } from 'lucide-react';
 import { formatCurrency } from '../../utils/dateUtils';
 
-export function PhonePeModal({ isOpen, onClose, amount, pharmacy, onPaymentSuccess }) {
+export function PhonePeModal({ isOpen, onClose, amount, pharmacy, onPaymentSuccess, onPaymentFail }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [successView, setSuccessView] = useState(false);
+  const [failedView, setFailedView] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setIsProcessing(false);
+      setSuccessView(false);
+      setFailedView(false);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
   const handleSimulateSuccess = () => {
     setIsProcessing(true);
+    setFailedView(false);
     setTimeout(() => {
       setIsProcessing(false);
       setSuccessView(true);
       setTimeout(() => {
         onPaymentSuccess();
       }, 1500);
-    }, 1200);
+    }, 1000);
+  };
+
+  const handleSimulateFailure = () => {
+    setIsProcessing(true);
+    setTimeout(async () => {
+      try {
+        if (onPaymentFail) {
+          await onPaymentFail();
+        }
+      } finally {
+        setIsProcessing(false);
+        setFailedView(true);
+      }
+    }, 800);
   };
 
   return (
@@ -66,6 +90,33 @@ export function PhonePeModal({ isOpen, onClose, amount, pharmacy, onPaymentSucce
               <p className="text-xs text-emerald-600 bg-emerald-50 py-1.5 px-3 rounded-lg inline-block font-medium">
                 Status: Paid • Updating Order Details...
               </p>
+            </div>
+          ) : failedView ? (
+            <div className="py-6 text-center space-y-4">
+              <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto">
+                <XCircle className="w-10 h-10" />
+              </div>
+              <h3 className="text-xl font-bold text-slate-800">Demo Payment Failed</h3>
+              <p className="text-xs text-slate-500 max-w-xs mx-auto">
+                Simulated UPI transaction was declined. No stock was deducted and no real payment was attempted.
+              </p>
+              <div className="space-y-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setFailedView(false)}
+                  className="w-full py-2.5 px-4 bg-[#5f259f] hover:bg-[#4d1e82] text-white font-semibold rounded-xl text-sm flex items-center justify-center space-x-1.5"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Retry Demo Payment</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full py-2 px-4 text-slate-600 hover:bg-slate-100 font-medium rounded-xl text-xs"
+                >
+                  Cancel Order & Close
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-5 text-center">
@@ -173,6 +224,16 @@ export function PhonePeModal({ isOpen, onClose, amount, pharmacy, onPaymentSucce
                       <span>Simulate Payment Success</span>
                     </>
                   )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSimulateFailure}
+                  disabled={isProcessing}
+                  className="w-full py-2 px-4 text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 font-medium rounded-xl text-xs transition-colors flex items-center justify-center space-x-1.5 disabled:opacity-60"
+                >
+                  <XCircle className="w-4 h-4" />
+                  <span>Simulate Payment Failure</span>
                 </button>
 
                 <button

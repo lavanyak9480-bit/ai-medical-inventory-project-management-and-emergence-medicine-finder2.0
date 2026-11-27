@@ -2,10 +2,18 @@
 node_modules/
 
 # Backend / Python
+.venv/
+venv/
 backend/venv/
+backend/.venv/
 backend/.env
 backend/medifind.db
 backend/uploads/
+backend/backups/
+*.db
+*.sqlite
+*.sqlite3
+.pytest_cache/
 **/__pycache__/
 *.py[cod]
 *$py.class
@@ -17,10 +25,11 @@ dist-ssr/
 
 # Environment files
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
 
 # Logs
 npm-debug.log*

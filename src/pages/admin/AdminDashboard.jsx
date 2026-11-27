@@ -17,21 +17,24 @@ import { AddMedicineModal } from '../../components/admin/AddMedicineModal';
 import { formatCurrency, formatDate, isExpired, isNearExpiry } from '../../utils/dateUtils';
 
 export function AdminDashboard() {
-  const { medicines, prescriptions, orders } = useApp();
+  const {
+    medicines,
+    pharmacyAInventory,
+    pharmacyBInventory,
+    prescriptions,
+    orders,
+    adminDashboard
+  } = useApp();
   const [isAddOpen, setIsAddOpen] = useState(false);
 
-  // Compute the exact 4 required statistics:
-  // 1. Total Medicines
-  const totalMedicinesCount = medicines.length;
+  // Compute the exact 4 required statistics from backend /api/admin/dashboard (with fallback):
+  const totalMedicinesCount = adminDashboard?.metrics?.total_medicines ?? medicines.length;
+  const pendingRxCount = adminDashboard?.metrics?.pending_prescriptions ?? prescriptions.filter(p => p.status === 'Pending Verification').length;
+  const lowStockCount = adminDashboard?.metrics?.low_stock ?? medicines.filter(m => m.quantity !== null && m.quantity !== undefined && m.quantity < 20).length;
+  const nearExpiryCount = adminDashboard?.metrics?.near_expiry ?? medicines.filter(m => isNearExpiry(m.expiryDate) && !isExpired(m.expiryDate)).length;
 
-  // 2. Pending Prescriptions
-  const pendingRxCount = prescriptions.filter(p => p.status === 'Pending Verification').length;
-
-  // 3. Low Stock (e.g. quantity < 20 and not 0)
-  const lowStockCount = medicines.filter(m => m.quantity > 0 && m.quantity < 20).length;
-
-  // 4. Near Expiry (e.g. expiring within 90 days and not expired)
-  const nearExpiryCount = medicines.filter(m => isNearExpiry(m.expiryDate) && !isExpired(m.expiryDate)).length;
+  const pharmaACount = adminDashboard?.pharmacies?.pharmacy_a_total ?? pharmacyAInventory.length;
+  const pharmaBCount = adminDashboard?.pharmacies?.pharmacy_b_total ?? pharmacyBInventory.length;
 
   // Recent Orders (last 5)
   const recentOrders = orders.slice(0, 5);
@@ -117,7 +120,7 @@ export function AdminDashboard() {
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                {medicines.filter(m => m.pharmacy === 'Pharmacy A').length} cataloged medicines & batches
+                {pharmaACount} cataloged medicines & batches
               </p>
             </div>
           </div>
@@ -140,7 +143,7 @@ export function AdminDashboard() {
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                {medicines.filter(m => m.pharmacy === 'Pharmacy B').length} cataloged medicines & batches
+                {pharmaBCount} cataloged medicines & batches
               </p>
             </div>
           </div>

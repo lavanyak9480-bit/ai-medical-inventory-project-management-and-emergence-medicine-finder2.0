@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 320" width="520" height="320">
+  <rect width="520" height="320" rx="16" fill="#f8fafc"/>
+  <rect x="16" y="16" width="488" height="288" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <rect x="16" y="16" width="488" height="62" rx="12" fill="#ecfdf5"/>
+  <text x="36" y="44" fill="#065f46" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800">Dr. Sunita Patel, MD, DM (Cardio)</text>
+  <text x="36" y="64" fill="#047857" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="600">Apex Heart &amp; Vascular Institute • Date: 2026-11-18</text>
+  <text x="430" y="54" fill="#059669" font-family="Georgia, serif" font-size="28" font-weight="700">Rx</text>
+  <line x1="32" y1="98" x2="488" y2="98" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="36" y="118" fill="#64748b" font-family="Inter, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="1">PRESCRIBED MEDICINES (Chronic Care)</text>
+  <text x="48" y="148" fill="#1e293b" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600" opacity="1">1. Tab. Atorvastatin 20mg - 1 tab OD night x 30 days</text><text x="48" y="180" fill="#1e293b" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600" opacity="1">2. Tab. Metformin 500mg - 1 tab BD after meals x 30 days</text><text x="48" y="212" fill="#1e293b" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600" opacity="1">3. Tab. Pantoprazole 40mg - 1 tab OD before breakfast x 15 days</text>
+  <line x1="330" y1="268" x2="472" y2="268" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="401" y="284" fill="#64748b" font-family="Inter, Arial, sans-serif" font-size="10" text-anchor="middle">Authorized Signature &amp; Seal</text>
+</svg>

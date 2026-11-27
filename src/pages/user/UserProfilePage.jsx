@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { User, Mail, Phone, MapPin, CheckCircle2, LogOut, Save } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { User, Mail, Phone, MapPin, CheckCircle2, LogOut, Save, AlertCircle } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -8,13 +8,26 @@ export function UserProfilePage() {
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
-    name: currentUser?.name || 'Rahul Verma',
-    email: currentUser?.email || 'rahul.verma@example.com',
-    phone: currentUser?.phone || '+91 98765 43210',
-    address: currentUser?.address || 'Flat 402, Green Valley Apts, Indiranagar, Bengaluru - 560038'
+    name: currentUser?.name || '',
+    email: currentUser?.email || '',
+    phone: currentUser?.phone || '',
+    address: currentUser?.address || ''
   });
 
+  useEffect(() => {
+    if (currentUser) {
+      setFormData({
+        name: currentUser.name || '',
+        email: currentUser.email || '',
+        phone: currentUser.phone || '',
+        address: currentUser.address || ''
+      });
+    }
+  }, [currentUser]);
+
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const handleChange = (e) => {
     setFormData(prev => ({
@@ -23,15 +36,23 @@ export function UserProfilePage() {
     }));
   };
 
-  const handleSave = (e) => {
+  const handleSave = async (e) => {
     e.preventDefault();
-    updateProfile(formData);
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 2500);
+    setError('');
+    setSaving(true);
+    try {
+      await updateProfile(formData);
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 2500);
+    } catch (err) {
+      setError(err.message || 'Failed to update profile.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/');
   };
 
@@ -45,6 +66,12 @@ export function UserProfilePage() {
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8">
+        {error && (
+          <div className="mb-5 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center space-x-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
         {savedSuccess && (
           <div className="mb-5 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs flex items-center space-x-2">
             <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -143,10 +170,11 @@ export function UserProfilePage() {
 
             <button
               type="submit"
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl shadow-sm transition-colors flex items-center space-x-1.5"
+              disabled={saving}
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-semibold rounded-xl shadow-sm transition-colors flex items-center space-x-1.5"
             >
               <Save className="w-4 h-4" />
-              <span>Save Changes</span>
+              <span>{saving ? 'Saving...' : 'Save Changes'}</span>
             </button>
           </div>
         </form>

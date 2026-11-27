@@ -252,7 +252,7 @@ export const SAMPLE_PRESCRIPTIONS = [
     doctorName: "Dr. Arvind Sharma, MBBS, MD",
     clinic: "City Life Care Hospital, OPD-14",
     date: "2026-11-20",
-    previewUrl: "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&w=600&q=80",
+    previewUrl: "/images/prescriptions/sample-rx-1.svg",
     extractedMedicines: [
       {
         id: "ext-1",
@@ -289,7 +289,7 @@ export const SAMPLE_PRESCRIPTIONS = [
     doctorName: "Dr. Sunita Patel, MD, DM (Cardio)",
     clinic: "Apex Heart & Vascular Institute",
     date: "2026-11-18",
-    previewUrl: "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=600&q=80",
+    previewUrl: "/images/prescriptions/sample-rx-2.svg",
     extractedMedicines: [
       {
         id: "ext-4",
@@ -326,7 +326,7 @@ export const SAMPLE_PRESCRIPTIONS = [
     doctorName: "Dr. K. N. Verma, General Physician",
     clinic: "Verma Polyclinic",
     date: "2026-11-21",
-    previewUrl: "https://images.unsplash.com/photo-1584017911766-d451b3d0e843?auto=format&fit=crop&w=600&q=80",
+    previewUrl: "/images/prescriptions/sample-rx-3.svg",
     extractedMedicines: [
       {
         id: "ext-7",

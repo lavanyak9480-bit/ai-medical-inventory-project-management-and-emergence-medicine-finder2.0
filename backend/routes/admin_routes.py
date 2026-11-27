@@ -30,9 +30,9 @@ def get_dashboard_metrics(current_user):
     # 2. Pending Prescriptions
     pending_prescriptions = Prescription.query.filter_by(status='Pending Verification').count()
 
-    # 3. Low Stock (< 20 units and not 0)
+    # 3. Low Stock (< 20 units, excluding unstocked catalog entries with NULL quantity)
     low_stock = Inventory.query.filter(
-        Inventory.quantity > 0,
+        Inventory.quantity.isnot(None),
         Inventory.quantity < 20
     ).count()
 

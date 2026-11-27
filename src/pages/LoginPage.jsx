@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Activity, ShieldCheck, User, Lock, Mail, AlertCircle, ArrowRight } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { DEMO_ADMIN, DEMO_USER } from '../data/mockData';
 
 export function LoginPage() {
   const { login } = useApp();
@@ -13,8 +12,9 @@ export function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
@@ -23,10 +23,11 @@ export function LoginPage() {
       return;
     }
 
+    setIsSubmitting(true);
     try {
-      const result = login(email, password, activeRole);
+      const result = await login(email, password, activeRole);
       if (result.success) {
-        if (activeRole === 'admin') {
+        if (result.role === 'admin') {
           navigate('/admin');
         } else {
           navigate('/dashboard');
@@ -34,19 +35,21 @@ export function LoginPage() {
       }
     } catch (err) {
       setError(err.message || 'Login failed.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleFillDemoAdmin = () => {
     setActiveRole('admin');
-    setEmail(DEMO_ADMIN.email);
+    setEmail('admin@medifind.ai');
     setPassword('admin123');
     setError('');
   };
 
   const handleFillDemoUser = () => {
     setActiveRole('user');
-    setEmail(DEMO_USER.email);
+    setEmail('rahul.verma@example.com');
     setPassword('user123');
     setError('');
   };
@@ -174,9 +177,10 @@ export function LoginPage() {
 
             <button
               type="submit"
-              className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center space-x-2"
+              disabled={isSubmitting}
+              className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-semibold rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center space-x-2"
             >
-              <span>Sign in as {activeRole === 'admin' ? 'Main Admin' : 'User'}</span>
+              <span>{isSubmitting ? 'Signing in...' : `Sign in as ${activeRole === 'admin' ? 'Main Admin' : 'User'}`}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ClipboardList, Search, Filter, CheckCircle2, ChevronDown } from 'lucide-react';
+import { ClipboardList, Search, Filter, AlertCircle } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Badge } from '../../components/common/Badge';
 import { formatCurrency, formatDate } from '../../utils/dateUtils';
@@ -9,23 +9,34 @@ const ORDER_STAGES = [
   "Verification",
   "Preparing",
   "Dispatched",
-  "Delivered"
+  "Delivered",
+  "Cancelled"
 ];
 
 export function OrdersManagementPage() {
   const { orders, updateOrderStatus } = useApp();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPharmacy, setSelectedPharmacy] = useState('ALL');
+  const [statusError, setStatusError] = useState('');
 
   const filteredOrders = orders.filter(o => {
     const matchesSearch =
-      o.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      String(o.id).toLowerCase().includes(searchTerm.toLowerCase()) ||
       o.userName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      o.medicines.some(m => m.name.toLowerCase().includes(searchTerm.toLowerCase()));
+      (o.medicines || []).some(m => m.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
     const matchesPharmacy = selectedPharmacy === 'ALL' || o.pharmacy === selectedPharmacy;
     return matchesSearch && matchesPharmacy;
   });
+
+  const handleStatusChange = async (orderId, status) => {
+    setStatusError('');
+    try {
+      await updateOrderStatus(orderId, status);
+    } catch (err) {
+      setStatusError(err.message || 'Failed to update order status.');
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -35,6 +46,13 @@ export function OrdersManagementPage() {
           Monitor and advance order fulfillment stages across Pharmacy A and Pharmacy B.
         </p>
       </div>
+
+      {statusError && (
+        <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center space-x-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{statusError}</span>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -112,11 +130,19 @@ export function OrdersManagementPage() {
                   <td className="px-4 py-3.5">
                     <select
                       value={ord.orderStatus}
-                      onChange={(e) => updateOrderStatus(ord.id, e.target.value)}
-                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-2xs"
+                      disabled={ord.orderStatus === 'Cancelled' || ord.orderStatus === 'Delivered'}
+                      onChange={(e) => handleStatusChange(ord.id, e.target.value)}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-2xs disabled:opacity-60 disabled:bg-slate-100"
                     >
                       {ORDER_STAGES.map((st) => (
-                        <option key={st} value={st}>
+                        <option
+                          key={st}
+                          value={st}
+                          disabled={
+                            (st === 'Cancelled' && (ord.orderStatus === 'Dispatched' || ord.orderStatus === 'Delivered')) ||
+                            ((st === 'Dispatched' || st === 'Delivered') && ord.paymentStatus !== 'Paid')
+                          }
+                        >
                           {st}
                         </option>
                       ))}

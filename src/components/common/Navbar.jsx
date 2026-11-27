@@ -23,8 +23,8 @@ export function Navbar() {
   // Total items in cart across both pharmacies
   const totalCartItems = (carts['Pharmacy A']?.length || 0) + (carts['Pharmacy B']?.length || 0);
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/');
   };
 

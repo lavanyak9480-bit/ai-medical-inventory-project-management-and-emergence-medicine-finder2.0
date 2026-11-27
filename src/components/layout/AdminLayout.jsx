@@ -11,13 +11,14 @@ import {
   PlusCircle,
   Activity,
   Menu,
-  X
+  X,
+  AlertCircle
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { AddMedicineModal } from '../admin/AddMedicineModal';
 
 export function AdminLayout({ children }) {
-  const { logout, prescriptions, medicines } = useApp();
+  const { logout, prescriptions, apiError, setApiError } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
   const [isAddMedicineOpen, setIsAddMedicineOpen] = useState(false);
@@ -25,8 +26,8 @@ export function AdminLayout({ children }) {
 
   const pendingRxCount = prescriptions.filter(p => p.status === 'Pending Verification').length;
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/login');
   };
 
@@ -59,8 +60,8 @@ export function AdminLayout({ children }) {
                 <Activity className="w-5 h-5" />
               </div>
               <div>
-                <span className="font-bold text-slate-800 text-lg">MediFind AI</span>
-                <span className="ml-2 text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-semibold">
+                <span className="font-bold text-slate-800 text-base sm:text-lg">MediFind AI</span>
+                <span className="hidden sm:inline-block ml-2 text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-semibold">
                   Main Admin Portal
                 </span>
               </div>
@@ -189,8 +190,24 @@ export function AdminLayout({ children }) {
         )}
 
         {/* Content Area */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+        <main className="flex-1 min-w-0 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
+            {apiError && (
+              <div className="mb-5 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center justify-between gap-2">
+                <div className="flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{apiError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setApiError('')}
+                  className="p-1 text-rose-500 hover:text-rose-700 rounded-lg"
+                  aria-label="Dismiss error"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
             {children}
           </div>
         </main>

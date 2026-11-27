@@ -17,6 +17,7 @@ export function RegisterPage() {
   });
 
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleChange = (e) => {
     setFormData(prev => ({
@@ -26,7 +27,7 @@ export function RegisterPage() {
     setError('');
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
@@ -45,13 +46,16 @@ export function RegisterPage() {
       return;
     }
 
+    setIsSubmitting(true);
     try {
-      const result = register(formData);
+      const result = await register(formData);
       if (result.success) {
         navigate('/dashboard');
       }
     } catch (err) {
       setError(err.message || 'Registration failed.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -185,9 +189,10 @@ export function RegisterPage() {
             <div className="pt-2">
               <button
                 type="submit"
-                className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center space-x-2"
+                disabled={isSubmitting}
+                className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-semibold rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center space-x-2"
               >
-                <span>Complete Registration</span>
+                <span>{isSubmitting ? 'Creating Account...' : 'Complete Registration'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>

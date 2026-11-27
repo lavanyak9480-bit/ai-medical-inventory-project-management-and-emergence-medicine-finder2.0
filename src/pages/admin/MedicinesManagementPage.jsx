@@ -12,6 +12,8 @@ import {
 import { useApp } from '../../context/AppContext';
 import { Badge, StockBadge } from '../../components/common/Badge';
 import { Modal } from '../../components/common/Modal';
+import { MedicineImage } from '../../components/common/MedicineImage';
+import { MedicineDetailsModal } from '../../components/common/MedicineDetailsModal';
 import { AddMedicineModal } from '../../components/admin/AddMedicineModal';
 import { formatCurrency, formatDate, isExpired } from '../../utils/dateUtils';
 
@@ -21,6 +23,7 @@ export function MedicinesManagementPage() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingMedicine, setEditingMedicine] = useState(null);
   const [deletingMedicine, setDeletingMedicine] = useState(null);
+  const [detailsMedicine, setDetailsMedicine] = useState(null);
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
@@ -37,12 +40,16 @@ export function MedicinesManagementPage() {
     expiryDate: ''
   });
   const [editError, setEditError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   const filteredMedicines = medicines.filter(m => {
+    const q = searchTerm.toLowerCase();
     const matchesSearch =
-      m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      m.batchNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      m.genericName?.toLowerCase().includes(searchTerm.toLowerCase());
+      m.name.toLowerCase().includes(q) ||
+      (m.batchNumber || '').toLowerCase().includes(q) ||
+      (m.genericName || '').toLowerCase().includes(q) ||
+      (m.category || '').toLowerCase().includes(q);
 
     const matchesPharmacy = selectedPharmacy === 'ALL' || m.pharmacy === selectedPharmacy;
     return matchesSearch && matchesPharmacy;
@@ -51,54 +58,67 @@ export function MedicinesManagementPage() {
   const handleOpenEdit = (med) => {
     setEditingMedicine(med);
     setEditForm({
-      name: med.name,
-      strength: med.strength,
-      form: med.form,
-      batchNumber: med.batchNumber,
-      quantity: med.quantity,
-      price: med.price,
-      expiryDate: med.expiryDate
+      name: med.name || '',
+      strength: med.strength || '',
+      form: med.form || '',
+      batchNumber: med.batchNumber || '',
+      quantity: med.quantity !== null && med.quantity !== undefined ? med.quantity : '',
+      price: med.price !== null && med.price !== undefined ? med.price : '',
+      expiryDate: med.expiryDate || ''
     });
     setEditError('');
   };
 
-  const handleSaveEdit = (e) => {
+  const handleSaveEdit = async (e) => {
     e.preventDefault();
     setEditError('');
 
-    try {
-      const qty = parseInt(editForm.quantity, 10);
-      const prc = parseFloat(editForm.price);
+    const payload = {
+      name: editForm.name,
+      strength: editForm.strength,
+      form: editForm.form,
+      batchNumber: editForm.batchNumber,
+      expiryDate: editForm.expiryDate
+    };
 
+    if (editForm.quantity !== '') {
+      const qty = parseInt(editForm.quantity, 10);
       if (isNaN(qty) || qty < 0) {
         setEditError('Quantity cannot be negative.');
         return;
       }
+      payload.quantity = qty;
+    }
+
+    if (editForm.price !== '') {
+      const prc = parseFloat(editForm.price);
       if (isNaN(prc) || prc <= 0) {
         setEditError('Price must be greater than 0.');
         return;
       }
+      payload.price = prc;
+    }
 
-      updateMedicine(editingMedicine.id, {
-        name: editForm.name,
-        strength: editForm.strength,
-        form: editForm.form,
-        batchNumber: editForm.batchNumber,
-        quantity: qty,
-        price: prc,
-        expiryDate: editForm.expiryDate
-      });
-
+    setIsSaving(true);
+    try {
+      await updateMedicine(editingMedicine.id, payload);
       setEditingMedicine(null);
     } catch (err) {
       setEditError(err.message || 'Failed to update medicine.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (deletingMedicine) {
-      deleteMedicine(deletingMedicine.id);
-      setDeletingMedicine(null);
+      setDeleteError('');
+      try {
+        await deleteMedicine(deletingMedicine.id);
+        setDeletingMedicine(null);
+      } catch (err) {
+        setDeleteError(err.message || 'Failed to delete medicine.');
+      }
     }
   };
 
@@ -172,11 +192,34 @@ export function MedicinesManagementPage() {
                 return (
                   <tr key={med.id} className={`hover:bg-slate-50/70 transition-colors ${expired ? 'bg-rose-50/20' : ''}`}>
                     <td className="px-4 py-3.5">
-                      <p className="font-bold text-slate-800 text-sm">{med.name}</p>
-                      <p className="text-slate-400 text-[11px] font-mono">Batch: {med.batchNumber}</p>
+                      <div className="flex items-center space-x-3">
+                        <MedicineImage
+                          imageUrl={med.imageUrl}
+                          name={med.name}
+                          strength={med.strength}
+                          form={med.form}
+                          size="sm"
+                          onClick={() => setDetailsMedicine(med)}
+                        />
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => setDetailsMedicine(med)}
+                            className="font-bold text-slate-800 text-sm hover:text-emerald-700 text-left transition-colors"
+                          >
+                            {med.name}
+                          </button>
+                          <p className="text-slate-400 text-[11px] font-mono">
+                            Batch: {med.batchNumber || 'Not provided'}
+                          </p>
+                          {med.category && (
+                            <p className="text-slate-400 text-[10px]">{med.category}</p>
+                          )}
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-3.5 text-slate-600">
-                      {med.strength} <span className="text-slate-400 text-[11px]">({med.form})</span>
+                      {med.strength || 'Not specified'} <span className="text-slate-400 text-[11px]">({med.form})</span>
                     </td>
                     <td className="px-4 py-3.5">
                       <Badge variant={med.pharmacy}>{med.pharmacy}</Badge>
@@ -240,7 +283,7 @@ export function MedicinesManagementPage() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Medicine Name</label>
                 <input
@@ -257,20 +300,20 @@ export function MedicinesManagementPage() {
                   type="text"
                   value={editForm.strength}
                   onChange={(e) => setEditForm(prev => ({ ...prev, strength: e.target.value }))}
-                  required
+                  placeholder="e.g. 500mg"
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Batch Number</label>
                 <input
                   type="text"
                   value={editForm.batchNumber}
                   onChange={(e) => setEditForm(prev => ({ ...prev, batchNumber: e.target.value }))}
-                  required
+                  placeholder="e.g. BATCH-01"
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
                 />
               </div>
@@ -286,7 +329,7 @@ export function MedicinesManagementPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Stock Quantity</label>
                 <input
@@ -294,7 +337,6 @@ export function MedicinesManagementPage() {
                   min="0"
                   value={editForm.quantity}
                   onChange={(e) => setEditForm(prev => ({ ...prev, quantity: e.target.value }))}
-                  required
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
                 />
               </div>
@@ -302,11 +344,10 @@ export function MedicinesManagementPage() {
                 <label className="block text-xs font-medium text-slate-700 mb-1">Price (₹)</label>
                 <input
                   type="number"
-                  step="0.5"
-                  min="0.5"
+                  step="0.01"
+                  min="0.01"
                   value={editForm.price}
                   onChange={(e) => setEditForm(prev => ({ ...prev, price: e.target.value }))}
-                  required
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
                 />
               </div>
@@ -316,7 +357,6 @@ export function MedicinesManagementPage() {
                   type="date"
                   value={editForm.expiryDate}
                   onChange={(e) => setEditForm(prev => ({ ...prev, expiryDate: e.target.value }))}
-                  required
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
                 />
               </div>
@@ -332,9 +372,10 @@ export function MedicinesManagementPage() {
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl"
+                disabled={isSaving}
+                className="px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 rounded-xl"
               >
-                Save Changes
+                {isSaving ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </form>
@@ -350,6 +391,11 @@ export function MedicinesManagementPage() {
           maxWidth="max-w-md"
         >
           <div className="space-y-4">
+            {deleteError && (
+              <div className="p-3 rounded-xl bg-rose-50 text-rose-700 text-xs">
+                {deleteError}
+              </div>
+            )}
             <p className="text-xs text-slate-600">
               Are you sure you want to remove <strong className="text-slate-900">{deletingMedicine.name} ({deletingMedicine.strength})</strong> from <strong className="text-emerald-700">{deletingMedicine.pharmacy}</strong>?
             </p>
@@ -381,6 +427,14 @@ export function MedicinesManagementPage() {
       <AddMedicineModal
         isOpen={isAddOpen}
         onClose={() => setIsAddOpen(false)}
+      />
+
+      {/* Medicine Details Modal */}
+      <MedicineDetailsModal
+        isOpen={Boolean(detailsMedicine)}
+        onClose={() => setDetailsMedicine(null)}
+        medicine={detailsMedicine}
+        mode="inventory"
       />
     </div>
   );

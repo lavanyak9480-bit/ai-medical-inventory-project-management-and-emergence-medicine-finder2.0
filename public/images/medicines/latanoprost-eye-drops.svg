@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Latanoprost">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#dbeafe"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" rx="18" fill="url(#bg)"/>
+  <rect x="2" y="2" width="116" height="116" rx="16" fill="none" stroke="#3b82f6" stroke-opacity="0.25" stroke-width="2"/>
+  
+        <path d="M55 18 L65 18 L67 30 L53 30 Z" fill="#2563eb"/>
+        <rect x="49" y="30" width="22" height="8" rx="2" fill="#3b82f6"/>
+        <rect x="41" y="38" width="38" height="46" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="2.4"/>
+        <rect x="45" y="48" width="30" height="24" rx="3" fill="#dbeafe"/>
+        <path d="M60 52 C65 59 67 63 67 66 A7 7 0 0 1 53 66 C53 63 55 59 60 52 Z" fill="#3b82f6"/>
+        <path d="M87 40 C91 46 93 49 93 52 A6 6 0 0 1 81 52 C81 49 83 46 87 40 Z" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.8"/>
+        
+  <rect x="10" y="96" width="100" height="16" rx="8" fill="#2563eb" opacity="0.92"/>
+  <text x="60" y="107" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="8.5" font-weight="700" text-anchor="middle">Eye drops</text>
+</svg>

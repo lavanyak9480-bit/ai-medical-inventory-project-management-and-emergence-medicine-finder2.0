@@ -1,18 +1,20 @@
 from functools import wraps
 from flask import request, jsonify, current_app
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from models import db
 from models.user import User
 
 def create_access_token(user, expires_in_hours=24):
     """Generates a signed JWT access token containing user identity and role."""
+    now = datetime.now(timezone.utc)
     payload = {
-        'sub': user.id,
+        'sub': str(user.id),
         'email': user.email,
         'name': user.full_name,
         'role': user.role,
-        'iat': datetime.utcnow(),
-        'exp': datetime.utcnow() + timedelta(hours=expires_in_hours)
+        'iat': now,
+        'exp': now + timedelta(hours=expires_in_hours)
     }
     token = jwt.encode(payload, current_app.config['JWT_SECRET_KEY'], algorithm='HS256')
     return token
@@ -34,12 +36,13 @@ def token_required(f):
 
         try:
             payload = jwt.decode(token, current_app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
-            current_user = User.query.get(payload['sub'])
+            user_id = int(payload['sub'])
+            current_user = db.session.get(User, user_id)
             if not current_user:
                 return jsonify({'error': 'User account associated with this token no longer exists.'}), 401
         except jwt.ExpiredSignatureError:
             return jsonify({'error': 'Session token has expired. Please log in again.'}), 401
-        except jwt.InvalidTokenError:
+        except (jwt.InvalidTokenError, ValueError, TypeError):
             return jsonify({'error': 'Invalid authentication token.'}), 401
 
         return f(current_user, *args, **kwargs)

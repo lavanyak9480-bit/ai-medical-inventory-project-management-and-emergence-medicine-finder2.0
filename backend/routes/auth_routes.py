@@ -1,3 +1,4 @@
+import re
 from flask import request, jsonify
 from . import auth_bp
 from models import db
@@ -17,13 +18,16 @@ def register():
     password = data.get('password')
     address = data.get('address', '')
 
-    if not full_name or not email or not password:
+    if not full_name or not str(full_name).strip() or not email or not password:
         return jsonify({'error': 'Full name, email, and password are required.'}), 400
 
-    if len(password) < 6:
+    email = str(email).strip().lower()
+    if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
+        return jsonify({'error': 'Please provide a valid email address.'}), 400
+
+    if len(str(password)) < 6:
         return jsonify({'error': 'Password must be at least 6 characters long.'}), 400
 
-    email = email.strip().lower()
     if User.query.filter_by(email=email).first():
         return jsonify({'error': 'An account with this email address already exists.'}), 409
 

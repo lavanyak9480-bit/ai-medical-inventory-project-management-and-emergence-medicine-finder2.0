@@ -26,7 +26,7 @@ export function UserDashboard() {
   const myOrders = orders.filter(o => !o.userId || o.userId === currentUser?.id);
 
   const pendingRx = myPrescriptions.filter(p => p.status === 'Pending Verification').length;
-  const activeOrders = myOrders.filter(o => o.orderStatus !== 'Delivered').length;
+  const activeOrders = myOrders.filter(o => o.orderStatus !== 'Delivered' && o.orderStatus !== 'Cancelled').length;
 
   return (
     <div className="space-y-6">

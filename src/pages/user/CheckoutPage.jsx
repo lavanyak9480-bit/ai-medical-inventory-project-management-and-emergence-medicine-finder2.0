@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import {
   ShoppingBag,
   Building2,
@@ -15,49 +15,103 @@ import { useApp } from '../../context/AppContext';
 import { PhonePeModal } from '../../components/payment/PhonePeModal';
 import { formatCurrency } from '../../utils/dateUtils';
 import { Badge } from '../../components/common/Badge';
+import { MedicineImage } from '../../components/common/MedicineImage';
 
 export function CheckoutPage() {
-  const { carts, removeFromCart, createOrder, currentUser } = useApp();
+  const {
+    carts,
+    removeFromCart,
+    placeOrder,
+    completeDemoPayment,
+    failDemoPayment,
+    cancelDemoPayment,
+    currentUser
+  } = useApp();
   const navigate = useNavigate();
 
   const [deliveryAddress, setDeliveryAddress] = useState(
-    currentUser?.address || 'Flat 402, Green Valley Apts, Indiranagar, Bengaluru - 560038'
+    currentUser?.address || ''
   );
+
+  useEffect(() => {
+    if (currentUser?.address && !deliveryAddress) {
+      setDeliveryAddress(currentUser.address);
+    }
+  }, [currentUser?.address]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [checkoutError, setCheckoutError] = useState('');
+  const [isPlacing, setIsPlacing] = useState(false);
 
   // PhonePe Modal state
   const [activePaymentPharmacy, setActivePaymentPharmacy] = useState(null); // 'Pharmacy A' | 'Pharmacy B' | null
+  const [pendingOrder, setPendingOrder] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState(0);
 
   const cartA = carts['Pharmacy A'] || [];
   const cartB = carts['Pharmacy B'] || [];
+  const hasRxItems = [...cartA, ...cartB].some(it => it.medicine?.prescriptionRequired);
 
   const totalA = cartA.reduce((sum, item) => sum + (item.medicine.price * item.quantity), 0);
   const totalB = cartB.reduce((sum, item) => sum + (item.medicine.price * item.quantity), 0);
 
-  const handleLaunchPayment = (pharmacy, amount) => {
-    setActivePaymentPharmacy(pharmacy);
-    setPaymentAmount(amount);
+  const handleLaunchPayment = async (pharmacy, amount) => {
+    setCheckoutError('');
+    if (!deliveryAddress.trim()) {
+      setCheckoutError('Please enter a delivery address before proceeding to payment.');
+      return;
+    }
+
+    const items = pharmacy === 'Pharmacy A' ? cartA : cartB;
+    setIsPlacing(true);
+    try {
+      const createdOrder = await placeOrder({
+        pharmacy,
+        items,
+        deliveryAddress
+      });
+      setPendingOrder(createdOrder);
+      setActivePaymentPharmacy(pharmacy);
+      setPaymentAmount(createdOrder.totalAmount || amount);
+    } catch (err) {
+      setCheckoutError(err.message || 'Unable to place order. Please verify stock and prescription requirements.');
+    } finally {
+      setIsPlacing(false);
+    }
   };
 
-  const handlePaymentSuccess = () => {
-    if (!activePaymentPharmacy) return;
+  const handlePaymentSuccess = async () => {
+    if (!activePaymentPharmacy || !pendingOrder) return;
+    try {
+      await completeDemoPayment(pendingOrder.id, activePaymentPharmacy);
+      setActivePaymentPharmacy(null);
+      setPendingOrder(null);
+      navigate('/my-orders');
+    } catch (err) {
+      setCheckoutError(err.message || 'Demo payment failed.');
+      setActivePaymentPharmacy(null);
+      setPendingOrder(null);
+    }
+  };
 
-    const items = activePaymentPharmacy === 'Pharmacy A' ? cartA : cartB;
-    const amount = activePaymentPharmacy === 'Pharmacy A' ? totalA : totalB;
+  const handlePaymentFail = async () => {
+    if (!pendingOrder) return;
+    try {
+      await failDemoPayment(pendingOrder.id);
+    } catch (err) {
+      setCheckoutError(err.message || 'Demo payment failed.');
+    }
+  };
 
-    // Create order in context and reduce stock
-    const newOrder = createOrder({
-      pharmacy: activePaymentPharmacy,
-      items,
-      totalAmount: amount,
-      deliveryAddress,
-      paymentStatus: 'Paid',
-      paymentMethod: 'PhonePe UPI (Demo)'
-    });
-
+  const handleClosePayment = async () => {
+    if (pendingOrder) {
+      try {
+        await cancelDemoPayment(pendingOrder.id);
+        setCheckoutError(`Demo payment cancelled for order ${pendingOrder.id}. Cart items are still preserved.`);
+      } catch {
+        // Ignore cancellation error
+      }
+    }
     setActivePaymentPharmacy(null);
-    // Navigate directly to My Orders
-    navigate('/my-orders');
+    setPendingOrder(null);
   };
 
   if (cartA.length === 0 && cartB.length === 0) {
@@ -86,6 +140,27 @@ export function CheckoutPage() {
           Pharmacy A and Pharmacy B maintain separate inventories and are checked out individually.
         </p>
       </div>
+
+      {checkoutError && (
+        <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center space-x-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{checkoutError}</span>
+        </div>
+      )}
+
+      {hasRxItems && (
+        <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center space-x-2">
+            <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              Your cart contains prescription (Rx) medicine(s). A verified prescription matching those medicines is required before checkout.
+            </span>
+          </div>
+          <Link to="/my-prescriptions" className="font-semibold text-amber-800 underline hover:text-amber-950">
+            Check My Prescriptions
+          </Link>
+        </div>
+      )}
 
       {/* Delivery Address Section */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
@@ -121,12 +196,21 @@ export function CheckoutPage() {
 
               <div className="divide-y divide-slate-100 mt-3 max-h-56 overflow-y-auto pr-1">
                 {cartA.map((it) => (
-                  <div key={it.medicine.id} className="py-2 flex items-center justify-between text-xs">
-                    <div>
-                      <p className="font-semibold text-slate-800">{it.medicine.name} {it.medicine.strength}</p>
-                      <p className="text-slate-500 text-[11px]">
-                        Qty: {it.quantity} × {formatCurrency(it.medicine.price)}
-                      </p>
+                  <div key={it.medicine.id} className="py-2 flex items-center justify-between text-xs gap-2">
+                    <div className="flex items-center space-x-2.5 min-w-0">
+                      <MedicineImage
+                        imageUrl={it.medicine.imageUrl}
+                        name={it.medicine.name}
+                        strength={it.medicine.strength}
+                        form={it.medicine.form}
+                        size="xs"
+                      />
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-800 truncate">{it.medicine.name} {it.medicine.strength}</p>
+                        <p className="text-slate-500 text-[11px]">
+                          Qty: {it.quantity} × {formatCurrency(it.medicine.price)}
+                        </p>
+                      </div>
                     </div>
                     <div className="flex items-center space-x-2">
                       <span className="font-bold text-slate-800">
@@ -153,11 +237,12 @@ export function CheckoutPage() {
 
               <button
                 type="button"
+                disabled={isPlacing}
                 onClick={() => handleLaunchPayment('Pharmacy A', totalA)}
-                className="w-full py-3 bg-[#5f259f] hover:bg-[#4d1e82] text-white font-semibold rounded-xl shadow-md transition-all flex items-center justify-center space-x-2 text-xs"
+                className="w-full py-3 bg-[#5f259f] hover:bg-[#4d1e82] disabled:opacity-60 text-white font-semibold rounded-xl shadow-md transition-all flex items-center justify-center space-x-2 text-xs"
               >
                 <QrCode className="w-4 h-4 text-purple-200" />
-                <span>Pay {formatCurrency(totalA)} via PhonePe QR</span>
+                <span>{isPlacing ? 'Creating Order...' : `Pay ${formatCurrency(totalA)} via PhonePe QR`}</span>
               </button>
             </div>
           </div>
@@ -177,12 +262,21 @@ export function CheckoutPage() {
 
               <div className="divide-y divide-slate-100 mt-3 max-h-56 overflow-y-auto pr-1">
                 {cartB.map((it) => (
-                  <div key={it.medicine.id} className="py-2 flex items-center justify-between text-xs">
-                    <div>
-                      <p className="font-semibold text-slate-800">{it.medicine.name} {it.medicine.strength}</p>
-                      <p className="text-slate-500 text-[11px]">
-                        Qty: {it.quantity} × {formatCurrency(it.medicine.price)}
-                      </p>
+                  <div key={it.medicine.id} className="py-2 flex items-center justify-between text-xs gap-2">
+                    <div className="flex items-center space-x-2.5 min-w-0">
+                      <MedicineImage
+                        imageUrl={it.medicine.imageUrl}
+                        name={it.medicine.name}
+                        strength={it.medicine.strength}
+                        form={it.medicine.form}
+                        size="xs"
+                      />
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-800 truncate">{it.medicine.name} {it.medicine.strength}</p>
+                        <p className="text-slate-500 text-[11px]">
+                          Qty: {it.quantity} × {formatCurrency(it.medicine.price)}
+                        </p>
+                      </div>
                     </div>
                     <div className="flex items-center space-x-2">
                       <span className="font-bold text-slate-800">
@@ -209,11 +303,12 @@ export function CheckoutPage() {
 
               <button
                 type="button"
+                disabled={isPlacing}
                 onClick={() => handleLaunchPayment('Pharmacy B', totalB)}
-                className="w-full py-3 bg-[#5f259f] hover:bg-[#4d1e82] text-white font-semibold rounded-xl shadow-md transition-all flex items-center justify-center space-x-2 text-xs"
+                className="w-full py-3 bg-[#5f259f] hover:bg-[#4d1e82] disabled:opacity-60 text-white font-semibold rounded-xl shadow-md transition-all flex items-center justify-center space-x-2 text-xs"
               >
                 <QrCode className="w-4 h-4 text-purple-200" />
-                <span>Pay {formatCurrency(totalB)} via PhonePe QR</span>
+                <span>{isPlacing ? 'Creating Order...' : `Pay ${formatCurrency(totalB)} via PhonePe QR`}</span>
               </button>
             </div>
           </div>
@@ -223,10 +318,11 @@ export function CheckoutPage() {
       {/* PhonePe Dummy Payment Modal */}
       <PhonePeModal
         isOpen={Boolean(activePaymentPharmacy)}
-        onClose={() => setActivePaymentPharmacy(null)}
+        onClose={handleClosePayment}
         amount={paymentAmount}
         pharmacy={activePaymentPharmacy || ''}
         onPaymentSuccess={handlePaymentSuccess}
+        onPaymentFail={handlePaymentFail}
       />
     </div>
   );

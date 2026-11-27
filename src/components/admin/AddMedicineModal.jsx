@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
+import { MedicineImage } from '../common/MedicineImage';
 import { useApp } from '../../context/AppContext';
 import { PlusCircle, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { isExpired } from '../../utils/dateUtils';
 
-export function AddMedicineModal({ isOpen, onClose }) {
+export function AddMedicineModal({ isOpen, onClose, defaultPharmacy = 'Both Pharmacies' }) {
   const { addMedicine } = useApp();
 
   const initialFormState = {
@@ -18,12 +19,21 @@ export function AddMedicineModal({ isOpen, onClose }) {
     price: '',
     mfgDate: '',
     expiryDate: '',
-    pharmacySelection: 'Both Pharmacies' // 'Pharmacy A' | 'Pharmacy B' | 'Both Pharmacies'
+    pharmacySelection: defaultPharmacy // 'Pharmacy A' | 'Pharmacy B' | 'Both Pharmacies'
   };
 
   const [formData, setFormData] = useState(initialFormState);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setFormData(prev => ({ ...prev, pharmacySelection: defaultPharmacy }));
+      setError('');
+      setSuccessMsg('');
+    }
+  }, [isOpen, defaultPharmacy]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -34,13 +44,12 @@ export function AddMedicineModal({ isOpen, onClose }) {
     setError('');
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setSuccessMsg('');
 
     try {
-      // Basic validation checks
       if (!formData.name.trim()) {
         setError('Medicine name is required.');
         return;
@@ -71,18 +80,24 @@ export function AddMedicineModal({ isOpen, onClose }) {
         setError('Cannot add expired batches to sellable inventory. Please set a future expiry date.');
         return;
       }
+      if (formData.mfgDate && formData.mfgDate >= formData.expiryDate) {
+        setError('Manufacture date must be earlier than expiry date.');
+        return;
+      }
 
-      // Add to inventory
-      addMedicine(formData);
+      setIsSubmitting(true);
+      await addMedicine(formData);
       setSuccessMsg(`Successfully added ${formData.name} to ${formData.pharmacySelection}!`);
-      
+
       setTimeout(() => {
         setFormData(initialFormState);
         setSuccessMsg('');
         onClose();
-      }, 1000);
+      }, 800);
     } catch (err) {
       setError(err.message || 'Failed to add medicine.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -104,11 +119,18 @@ export function AddMedicineModal({ isOpen, onClose }) {
         )}
 
         {/* Pharmacy Selection */}
-        <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-          <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-            Target Pharmacy Inventory <span className="text-rose-500">*</span>
-          </label>
-          <div className="grid grid-cols-3 gap-2">
+        <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex items-center gap-3">
+          <MedicineImage
+            name={formData.name || 'Medicine'}
+            strength={formData.strength || formData.form}
+            form={formData.form}
+            size="md"
+          />
+          <div className="flex-1">
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+              Target Pharmacy Inventory <span className="text-rose-500">*</span>
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {[
               { id: 'Pharmacy A', label: 'Pharmacy A Only' },
               { id: 'Pharmacy B', label: 'Pharmacy B Only' },
@@ -133,6 +155,7 @@ export function AddMedicineModal({ isOpen, onClose }) {
                 <span>{item.label}</span>
               </label>
             ))}
+            </div>
           </div>
         </div>
 
@@ -259,8 +282,8 @@ export function AddMedicineModal({ isOpen, onClose }) {
             <input
               type="number"
               name="price"
-              step="0.5"
-              min="1"
+              step="0.01"
+              min="0.01"
               placeholder="e.g. 75.00"
               value={formData.price}
               onChange={handleChange}
@@ -311,10 +334,11 @@ export function AddMedicineModal({ isOpen, onClose }) {
           </button>
           <button
             type="submit"
-            className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition-colors flex items-center space-x-1.5"
+            disabled={isSubmitting}
+            className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 rounded-xl shadow-sm transition-colors flex items-center space-x-1.5"
           >
             <PlusCircle className="w-4 h-4" />
-            <span>Add to Inventory</span>
+            <span>{isSubmitting ? 'Adding...' : 'Add to Inventory'}</span>
           </button>
         </div>
       </form>

@@ -16,7 +16,7 @@ export function Footer() {
             </div>
           </div>
 
-          <div className="flex items-center space-x-6 text-xs text-slate-500">
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-slate-500 text-center">
             <span className="flex items-center gap-1">
               <ShieldCheck className="w-4 h-4 text-emerald-600" />
               Multi-Pharmacy Verification (Pharmacy A & B)

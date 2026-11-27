@@ -1,48 +1,68 @@
 import React, { useState } from 'react';
-import { Building2, Search, PlusCircle, Edit3, Check, X } from 'lucide-react';
+import { Building2, Search, PlusCircle, Edit3, Check, X, AlertCircle } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { StockBadge } from '../../components/common/Badge';
+import { MedicineImage } from '../../components/common/MedicineImage';
+import { MedicineDetailsModal } from '../../components/common/MedicineDetailsModal';
 import { AddMedicineModal } from '../../components/admin/AddMedicineModal';
 import { formatCurrency, formatDate, isExpired } from '../../utils/dateUtils';
 
 export function PharmacyBInventoryPage() {
-  const { medicines, updateMedicine } = useApp();
+  const { pharmacyBInventory, updateMedicine, fetchPharmacyBInventory } = useApp();
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [editError, setEditError] = useState('');
+  const [detailsMedicine, setDetailsMedicine] = useState(null);
 
   // Inline editing state: { [medId]: { stock, price } }
   const [editingId, setEditingId] = useState(null);
   const [inlineData, setInlineData] = useState({ stock: '', price: '' });
 
-  const pharmacyBMedicines = medicines.filter(
-    m => m.pharmacy === 'Pharmacy B' &&
-    (m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-     m.batchNumber.toLowerCase().includes(searchTerm.toLowerCase()))
+  React.useEffect(() => {
+    fetchPharmacyBInventory().catch(() => {});
+  }, [fetchPharmacyBInventory]);
+
+  const pharmacyBMedicines = pharmacyBInventory.filter(
+    m =>
+      m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (m.batchNumber || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (m.category || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const startInlineEdit = (med) => {
+    setEditError('');
     setEditingId(med.id);
-    setInlineData({ stock: med.quantity, price: med.price });
+    setInlineData({
+      stock: med.quantity !== null && med.quantity !== undefined ? med.quantity : '',
+      price: med.price !== null && med.price !== undefined ? med.price : ''
+    });
   };
 
-  const saveInlineEdit = (id) => {
+  const saveInlineEdit = async (id) => {
+    setEditError('');
     try {
-      const q = parseInt(inlineData.stock, 10);
-      const p = parseFloat(inlineData.price);
-
-      if (isNaN(q) || q < 0) {
-        alert('Stock quantity cannot be negative.');
-        return;
+      const payload = {};
+      if (inlineData.stock !== '') {
+        const q = parseInt(inlineData.stock, 10);
+        if (isNaN(q) || q < 0) {
+          setEditError('Stock quantity cannot be negative.');
+          return;
+        }
+        payload.quantity = q;
       }
-      if (isNaN(p) || p <= 0) {
-        alert('Price must be greater than zero.');
-        return;
+      if (inlineData.price !== '') {
+        const p = parseFloat(inlineData.price);
+        if (isNaN(p) || p <= 0) {
+          setEditError('Price must be greater than zero.');
+          return;
+        }
+        payload.price = p;
       }
 
-      updateMedicine(id, { quantity: q, price: p });
+      await updateMedicine(id, payload);
       setEditingId(null);
     } catch (err) {
-      alert(err.message);
+      setEditError(err.message || 'Failed to update Pharmacy B inventory.');
     }
   };
 
@@ -84,6 +104,13 @@ export function PharmacyBInventoryPage() {
         </div>
       </div>
 
+      {editError && (
+        <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center space-x-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{editError}</span>
+        </div>
+      )}
+
       {/* Table: Medicine name | Batch number | Stock quantity | Price | Expiry date | Stock status */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -107,10 +134,29 @@ export function PharmacyBInventoryPage() {
                 return (
                   <tr key={med.id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="px-4 py-3.5">
-                      <p className="font-bold text-slate-800 text-sm">{med.name}</p>
-                      <p className="text-slate-400 text-[11px]">{med.strength} • {med.form}</p>
+                      <div className="flex items-center space-x-3">
+                        <MedicineImage
+                          imageUrl={med.imageUrl}
+                          name={med.name}
+                          strength={med.strength}
+                          form={med.form}
+                          size="sm"
+                          onClick={() => setDetailsMedicine(med)}
+                        />
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => setDetailsMedicine(med)}
+                            className="font-bold text-slate-800 text-sm hover:text-sky-700 text-left transition-colors"
+                          >
+                            {med.name}
+                          </button>
+                          <p className="text-slate-400 text-[11px]">{med.strength || 'Strength not specified'} • {med.form}</p>
+                          {med.category && <p className="text-slate-400 text-[10px]">{med.category}</p>}
+                        </div>
+                      </div>
                     </td>
-                    <td className="px-4 py-3.5 font-mono text-slate-600">{med.batchNumber}</td>
+                    <td className="px-4 py-3.5 font-mono text-slate-600">{med.batchNumber || 'Not provided'}</td>
                     <td className="px-4 py-3.5">
                       {isEditing ? (
                         <input
@@ -121,15 +167,17 @@ export function PharmacyBInventoryPage() {
                           className="w-20 px-2 py-1 rounded border border-sky-400 text-xs font-bold"
                         />
                       ) : (
-                        <span className="font-bold text-slate-800">{med.quantity} units</span>
+                        <span className="font-bold text-slate-800">
+                          {med.quantity !== null && med.quantity !== undefined ? `${med.quantity} units` : 'Not provided'}
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-3.5">
                       {isEditing ? (
                         <input
                           type="number"
-                          step="0.5"
-                          min="0.5"
+                          step="0.01"
+                          min="0.01"
                           value={inlineData.price}
                           onChange={(e) => setInlineData(prev => ({ ...prev, price: e.target.value }))}
                           className="w-20 px-2 py-1 rounded border border-sky-400 text-xs font-bold"
@@ -192,6 +240,14 @@ export function PharmacyBInventoryPage() {
       <AddMedicineModal
         isOpen={isAddOpen}
         onClose={() => setIsAddOpen(false)}
+        defaultPharmacy="Pharmacy B"
+      />
+
+      <MedicineDetailsModal
+        isOpen={Boolean(detailsMedicine)}
+        onClose={() => setDetailsMedicine(null)}
+        medicine={detailsMedicine}
+        mode="inventory"
       />
     </div>
   );

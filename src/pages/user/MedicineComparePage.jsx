@@ -1,111 +1,124 @@
-import React, { useState } from 'react';
-import { useLocation, Link, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Scale,
   Search,
-  Building2,
   CheckCircle2,
   AlertCircle,
   ShoppingBag,
-  Info,
   ArrowRight,
   Plus,
   Minus
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { Badge, StockBadge } from '../../components/common/Badge';
-import { formatCurrency, isExpired } from '../../utils/dateUtils';
+import { StockBadge } from '../../components/common/Badge';
+import { MedicineImage } from '../../components/common/MedicineImage';
+import { MedicineDetailsModal } from '../../components/common/MedicineDetailsModal';
+import { formatCurrency, formatDate } from '../../utils/dateUtils';
 
 export function MedicineComparePage() {
-  const { medicines, carts, addToCart, removeFromCart, updateCartQuantity } = useApp();
+  const {
+    comparisonList,
+    fetchComparison,
+    carts,
+    addToCart,
+    updateCartQuantity
+  } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
 
-  // If navigated from OCR, use extracted medicines, otherwise search/browse
   const initialExtracted = location.state?.extractedMedicines || [];
   const [searchTerm, setSearchTerm] = useState('');
   const [cartSuccessNotice, setCartSuccessNotice] = useState('');
+  const [cartErrorNotice, setCartErrorNotice] = useState('');
+  const [detailsMedicine, setDetailsMedicine] = useState(null);
 
-  // Extract distinct medicine names available in the catalog
-  const distinctMedicineCatalog = React.useMemo(() => {
-    const map = new Map();
-    medicines.forEach(m => {
-      // Exclude expired batches from sellable search/comparison!
-      if (isExpired(m.expiryDate)) return;
+  useEffect(() => {
+    fetchComparison().catch(() => { });
+  }, [fetchComparison]);
 
-      const key = `${m.name.toLowerCase().trim()}_${m.strength.toLowerCase().trim()}`;
-      if (!map.has(key)) {
-        map.set(key, {
-          name: m.name,
-          strength: m.strength,
-          genericName: m.genericName,
-          form: m.form,
-          prescriptionRequired: m.prescriptionRequired
-        });
-      }
-    });
-    return Array.from(map.values());
-  }, [medicines]);
-
-  // If user came from OCR, map extracted names to comparison items
   const itemsToCompare = React.useMemo(() => {
+    let baseList;
     if (initialExtracted.length > 0) {
-      return initialExtracted.map(ext => {
-        // If unable to detect
-        if (ext.name.includes('Unable to detect')) {
-          return {
+      baseList = [];
+      initialExtracted.forEach(ext => {
+        if ((ext.name || '').includes('Unable to detect')) {
+          baseList.push({
             name: ext.name,
             strength: ext.strength,
             isUncertain: true
-          };
+          });
+          return;
         }
-        return {
-          name: ext.name,
-          strength: ext.strength,
-          isUncertain: false
-        };
+
+        // Match exact medicine name and normalized strength (if strength detected clearly)
+        const extName = (ext.name || '').toLowerCase().trim();
+        const extStrengthNorm = (ext.strength || '').toLowerCase().replace(/\s+/g, '');
+        const hasStrength = extStrengthNorm && !extStrengthNorm.includes('unabletodetect');
+
+        const matches = comparisonList.filter(c =>
+          c.name.toLowerCase().trim() === extName &&
+          (!hasStrength || (c.strength || '').toLowerCase().replace(/\s+/g, '') === extStrengthNorm)
+        );
+
+        if (matches.length > 0) {
+          matches.forEach(m => baseList.push({ ...m, isUncertain: false }));
+        } else {
+          baseList.push({
+            medicine_id: null,
+            name: ext.name,
+            strength: ext.strength,
+            form: '',
+            generic_name: '',
+            category: '',
+            prescription_required: true,
+            pharmacy_a: { available: false, stock: 0, price: null, status: 'Not Stocked' },
+            pharmacy_b: { available: false, stock: 0, price: null, status: 'Not Stocked' },
+            overall_status: 'Not available in either pharmacy.',
+            isUncertain: false
+          });
+        }
       });
+    } else {
+      baseList = comparisonList;
     }
 
-    // Otherwise show all or filtered items
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase();
-      return distinctMedicineCatalog.filter(
-        m => m.name.toLowerCase().includes(q) || m.genericName?.toLowerCase().includes(q)
+      return baseList.filter(
+        m =>
+          m.isUncertain ||
+          (m.name || '').toLowerCase().includes(q) ||
+          (m.generic_name || '').toLowerCase().includes(q) ||
+          (m.category || '').toLowerCase().includes(q) ||
+          (m.strength || '').toLowerCase().includes(q)
       );
     }
 
-    return distinctMedicineCatalog;
-  }, [initialExtracted, distinctMedicineCatalog, searchTerm]);
+    return baseList;
+  }, [initialExtracted, comparisonList, searchTerm]);
 
-  // Helper to get active non-expired stock and price for a pharmacy
-  const getPharmacyOffer = (medicineName, strength, pharmacyName) => {
-    const match = medicines.find(m =>
-      m.name.toLowerCase().trim() === medicineName.toLowerCase().trim() &&
-      (!strength || m.strength.toLowerCase().trim() === strength.toLowerCase().trim()) &&
-      m.pharmacy === pharmacyName &&
-      !isExpired(m.expiryDate)
-    );
-
-    if (!match) {
-      return { available: false, stock: 0, price: null, item: null };
-    }
-
-    return {
-      available: match.quantity > 0,
-      stock: match.quantity,
-      price: match.price,
-      item: match
-    };
-  };
-
-  const handleAddToCart = (pharmacy, item) => {
+  const handleAddToCart = (pharmacy, med, offer) => {
+    setCartErrorNotice('');
     try {
-      addToCart(pharmacy, item, 1);
-      setCartSuccessNotice(`Added ${item.name} (${pharmacy}) to cart!`);
+      const cartMedicine = {
+        id: offer.inventory_id,
+        inventoryId: offer.inventory_id,
+        medicineId: med.medicine_id,
+        name: med.name,
+        strength: med.strength || '',
+        form: med.form,
+        imageUrl: med.image_url,
+        price: offer.price,
+        quantity: offer.stock,
+        expiryDate: offer.expiry_date,
+        prescriptionRequired: med.prescription_required
+      };
+      addToCart(pharmacy, cartMedicine, 1);
+      setCartSuccessNotice(`Added ${med.name} (${pharmacy}) to cart!`);
       setTimeout(() => setCartSuccessNotice(''), 2500);
     } catch (err) {
-      alert(err.message);
+      setCartErrorNotice(err.message || 'Unable to add medicine to cart.');
     }
   };
 
@@ -124,7 +137,7 @@ export function MedicineComparePage() {
             Compare Pharmacy A & Pharmacy B
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Real-time stock and unit prices. Expired batches are automatically excluded. Order from pharmacies separately.
+            Live database comparison. Different strengths are never mixed, and expired batches are excluded.
           </p>
         </div>
 
@@ -147,13 +160,20 @@ export function MedicineComparePage() {
         </div>
       )}
 
-      {/* Search Input when not locked to extracted prescription */}
+      {cartErrorNotice && (
+        <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center space-x-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{cartErrorNotice}</span>
+        </div>
+      )}
+
+      {/* Search Input */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="relative flex-1">
           <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
           <input
             type="text"
-            placeholder="Search medicine by brand or generic name..."
+            placeholder="Search medicine by name, generic name, or category..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-9 pr-4 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -211,98 +231,111 @@ export function MedicineComparePage() {
                   );
                 }
 
-                const offerA = getPharmacyOffer(med.name, med.strength, 'Pharmacy A');
-                const offerB = getPharmacyOffer(med.name, med.strength, 'Pharmacy B');
-
+                const offerA = med.pharmacy_a || { available: false, stock: 0, price: null, status: 'Not Stocked' };
+                const offerB = med.pharmacy_b || { available: false, stock: 0, price: null, status: 'Not Stocked' };
                 const unavailableInBoth = !offerA.available && !offerB.available;
 
-                return (
-                  <tr key={index} className="hover:bg-slate-50/60 transition-colors">
-                    {/* Medicine Info */}
-                    <td className="px-5 py-4">
-                      <p className="font-bold text-slate-800 text-sm">{med.name}</p>
-                      <p className="text-slate-500 text-xs">{med.strength} {med.form ? `• ${med.form}` : ''}</p>
-                      {med.genericName && (
-                        <p className="text-slate-400 text-[11px] italic">{med.genericName}</p>
-                      )}
-                      {med.prescriptionRequired && (
-                        <span className="inline-block mt-1 text-[10px] font-semibold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
-                          Prescription (Rx) Required
+                const renderOfferCell = (pharmacyName, offer, btnColor) => {
+                  if (!offer.stocked_in_catalog) {
+                    return (
+                      <div className="text-slate-400 italic text-xs">
+                        Not stocked in {pharmacyName}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-1.5">
+                      <div className="flex items-baseline space-x-2">
+                        <span className="text-base font-bold text-slate-900">
+                          {offer.price !== null && offer.price !== undefined
+                            ? formatCurrency(offer.price)
+                            : 'Price missing'}
                         </span>
+                        {offer.price !== null && offer.price !== undefined && (
+                          <span className="text-[10px] text-slate-400">/ unit</span>
+                        )}
+                      </div>
+
+                      <div>
+                        <StockBadge quantity={offer.stock} />
+                      </div>
+
+                      {offer.expiry_date ? (
+                        <p className={`text-[11px] ${offer.is_near_expiry ? 'text-amber-600 font-semibold' : 'text-slate-500'}`}>
+                          Exp: {formatDate(offer.expiry_date)} {offer.is_near_expiry ? '(Near Expiry)' : ''}
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-slate-400">
+                          {offer.status}
+                        </p>
                       )}
+
+                      {offer.available && (
+                        <button
+                          type="button"
+                          onClick={() => handleAddToCart(pharmacyName, med, offer)}
+                          className={`mt-2 w-full py-1.5 px-3 ${btnColor} text-white font-medium rounded-lg text-xs shadow-xs transition-colors flex items-center justify-center space-x-1`}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Order from {pharmacyName}</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                };
+
+                return (
+                  <tr key={`${med.medicine_id || med.name}-${index}`} className="hover:bg-slate-50/60 transition-colors">
+                    <td className="px-5 py-4">
+                      <div className="flex items-start space-x-3">
+                        <MedicineImage
+                          imageUrl={med.image_url}
+                          name={med.name}
+                          strength={med.strength}
+                          form={med.form}
+                          size="sm"
+                          onClick={() => setDetailsMedicine(med)}
+                        />
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => setDetailsMedicine(med)}
+                            className="font-bold text-slate-800 text-sm hover:text-emerald-700 text-left transition-colors"
+                          >
+                            {med.name}
+                          </button>
+                          <p className="text-slate-500 text-xs">
+                            {med.strength || 'Strength not specified'} {med.form ? `• ${med.form}` : ''}
+                          </p>
+                          {med.category && (
+                            <p className="text-slate-400 text-[11px]">{med.category}</p>
+                          )}
+                          {med.prescription_required && (
+                            <span className="inline-block mt-1 text-[10px] font-semibold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                              Prescription (Rx) Required
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </td>
 
-                    {/* Pharmacy A Column */}
                     <td className="px-5 py-4 bg-emerald-50/30 border-x border-emerald-100">
-                      {offerA.item ? (
-                        <div className="space-y-1.5">
-                          <div className="flex items-baseline space-x-2">
-                            <span className="text-base font-bold text-slate-900">
-                              {formatCurrency(offerA.price)}
-                            </span>
-                            <span className="text-[10px] text-slate-400">/ unit</span>
-                          </div>
-                          <div>
-                            <StockBadge quantity={offerA.stock} />
-                          </div>
-                          {offerA.available && (
-                            <button
-                              type="button"
-                              onClick={() => handleAddToCart('Pharmacy A', offerA.item)}
-                              className="mt-2 w-full py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg text-xs shadow-xs transition-colors flex items-center justify-center space-x-1"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>Order from Pharmacy A</span>
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="text-slate-400 italic text-xs">
-                          Not stocked in Pharmacy A
-                        </div>
-                      )}
+                      {renderOfferCell('Pharmacy A', offerA, 'bg-emerald-600 hover:bg-emerald-700')}
                     </td>
 
-                    {/* Pharmacy B Column */}
                     <td className="px-5 py-4 bg-sky-50/30">
-                      {offerB.item ? (
-                        <div className="space-y-1.5">
-                          <div className="flex items-baseline space-x-2">
-                            <span className="text-base font-bold text-slate-900">
-                              {formatCurrency(offerB.price)}
-                            </span>
-                            <span className="text-[10px] text-slate-400">/ unit</span>
-                          </div>
-                          <div>
-                            <StockBadge quantity={offerB.stock} />
-                          </div>
-                          {offerB.available && (
-                            <button
-                              type="button"
-                              onClick={() => handleAddToCart('Pharmacy B', offerB.item)}
-                              className="mt-2 w-full py-1.5 px-3 bg-sky-600 hover:bg-sky-700 text-white font-medium rounded-lg text-xs shadow-xs transition-colors flex items-center justify-center space-x-1"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>Order from Pharmacy B</span>
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="text-slate-400 italic text-xs">
-                          Not stocked in Pharmacy B
-                        </div>
-                      )}
+                      {renderOfferCell('Pharmacy B', offerB, 'bg-sky-600 hover:bg-sky-700')}
                     </td>
 
-                    {/* Comparison Status */}
                     <td className="px-5 py-4 text-center">
                       {unavailableInBoth ? (
                         <div className="inline-flex flex-col items-center">
                           <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 border border-rose-300">
-                            Not available in either pharmacy
+                            Not available in either pharmacy.
                           </span>
                           <span className="text-[11px] text-slate-400 mt-1">
-                            Continue with other available medicines
+                            No active non-expired stock with pricing
                           </span>
                         </div>
                       ) : (
@@ -332,6 +365,13 @@ export function MedicineComparePage() {
                   </tr>
                 );
               })}
+              {itemsToCompare.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-5 py-10 text-center text-slate-400">
+                    No medicines match your search query.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -339,7 +379,6 @@ export function MedicineComparePage() {
 
       {/* Cart Summary Card & Notice */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Pharmacy A Cart Box */}
         <div className="bg-white rounded-2xl border border-emerald-200 p-5 shadow-sm">
           <div className="flex items-center justify-between pb-3 border-b border-emerald-100">
             <div className="flex items-center space-x-2">
@@ -383,7 +422,6 @@ export function MedicineComparePage() {
           </div>
         </div>
 
-        {/* Pharmacy B Cart Box */}
         <div className="bg-white rounded-2xl border border-sky-200 p-5 shadow-sm">
           <div className="flex items-center justify-between pb-3 border-b border-sky-100">
             <div className="flex items-center space-x-2">
@@ -427,6 +465,14 @@ export function MedicineComparePage() {
           </div>
         </div>
       </div>
+
+      <MedicineDetailsModal
+        isOpen={Boolean(detailsMedicine)}
+        onClose={() => setDetailsMedicine(null)}
+        medicine={detailsMedicine}
+        mode="compare"
+        onAddToCart={handleAddToCart}
+      />
     </div>
   );
 }

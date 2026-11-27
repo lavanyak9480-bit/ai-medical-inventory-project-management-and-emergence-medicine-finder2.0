@@ -47,22 +47,22 @@ export function LandingPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 via-emerald-50/20 to-sky-50/30 text-slate-800">
       {/* Top Banner Navigation */}
-      <header className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-md shadow-emerald-500/20">
+      <header className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex items-center justify-between gap-3">
+        <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
+          <div className="w-10 h-10 shrink-0 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-md shadow-emerald-500/20">
             <Activity className="w-6 h-6" />
           </div>
-          <div>
-            <h1 className="text-xl font-bold bg-gradient-to-r from-emerald-700 via-teal-700 to-sky-700 bg-clip-text text-transparent">
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-xl font-bold bg-gradient-to-r from-emerald-700 via-teal-700 to-sky-700 bg-clip-text text-transparent truncate">
               MediFind AI
             </h1>
-            <p className="text-[10px] text-slate-500 font-medium tracking-tight">
+            <p className="hidden sm:block text-[10px] text-slate-500 font-medium tracking-tight">
               Medical Inventory & Prescription OCR System
             </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
           {role ? (
             <Link
               to={role === 'admin' ? '/admin' : '/dashboard'}

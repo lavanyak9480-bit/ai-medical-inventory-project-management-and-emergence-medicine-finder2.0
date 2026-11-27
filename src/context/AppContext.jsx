@@ -1,66 +1,136 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
-  INITIAL_MEDICINES,
-  INITIAL_PRESCRIPTIONS,
-  INITIAL_ORDERS,
-  DEMO_ADMIN,
-  DEMO_USER
-} from '../data/mockData';
+  authAPI,
+  userAPI,
+  medicineAPI,
+  inventoryAPI,
+  prescriptionAPI,
+  orderAPI,
+  adminAPI,
+  getAuthToken,
+  setAuthToken
+} from '../services/api';
 import { isExpired } from '../utils/dateUtils';
 
 const AppContext = createContext();
 
+// Normalizers to align backend snake_case JSON with existing React component props
+function normalizeUser(u) {
+  if (!u) return null;
+  return {
+    ...u,
+    name: u.full_name || u.name || '',
+    fullName: u.full_name || u.name || ''
+  };
+}
+
+function normalizeInventoryItem(item) {
+  if (!item) return null;
+  return {
+    id: item.id,
+    inventoryId: item.id,
+    medicineId: item.medicine_id,
+    name: item.medicine_name || item.name || '',
+    genericName: item.generic_name || '',
+    category: item.category || '',
+    strength: item.strength || null,
+    form: item.form || '',
+    indication: item.indication || '',
+    prescriptionStatus: item.prescription_status || '',
+    prescriptionRequired: Boolean(item.prescription_required),
+    imageUrl: item.image_url || '',
+    pharmacy: item.pharmacy_name || '',
+    pharmacyId: item.pharmacy_id,
+    catalogItemNo: item.catalog_item_no || null,
+    batchNumber: item.batch_number || null,
+    quantity: item.quantity !== undefined ? item.quantity : null,
+    price: item.price !== undefined && item.price !== null ? Number(item.price) : null,
+    mfgDate: item.mfg_date || null,
+    expiryDate: item.expiry_date || null,
+    dataSource: item.data_source || '',
+    missingFields: item.missing_fields || [],
+    isOrderable: Boolean(item.is_orderable),
+    isExpired: Boolean(item.is_expired),
+    isNearExpiry: Boolean(item.is_near_expiry),
+    isLowStock: Boolean(item.is_low_stock)
+  };
+}
+
+function normalizePrescription(rx) {
+  if (!rx) return null;
+  return {
+    id: rx.id,
+    userId: rx.user_id,
+    userName: rx.user_name || 'Patient',
+    fileName: rx.file_name,
+    filePath: rx.file_path || null,
+    fileType: rx.file_type,
+    fileSize: rx.file_size,
+    fileUrl: rx.file_path ? prescriptionAPI.getFileUrl(rx.file_path) : null,
+    uploadedAt: rx.created_at,
+    status: rx.status,
+    reviewedBy: rx.reviewed_by,
+    reviewNotes: rx.rejection_reason || null,
+    medicines: (rx.medicines || []).map(m => ({
+      id: m.id,
+      name: m.name || m.medicine_name,
+      strength: m.strength,
+      dosage: m.dosage,
+      frequency: m.frequency,
+      duration: m.duration,
+      confidence: m.confidence
+    }))
+  };
+}
+
+function normalizeOrder(ord) {
+  if (!ord) return null;
+  return {
+    id: ord.id,
+    userId: ord.user_id,
+    userName: ord.user_name || 'Patient',
+    userPhone: ord.user_phone || '',
+    userAddress: ord.user_address || '',
+    pharmacy: ord.pharmacy_name || '',
+    createdAt: ord.created_at,
+    medicines: (ord.items || []).map(it => ({
+      id: it.id,
+      inventoryId: it.inventory_id,
+      name: it.name || `${it.medicine_name} ${it.strength || ''}`.trim(),
+      medicineName: it.medicine_name || it.name || '',
+      strength: it.strength || '',
+      form: it.form || '',
+      imageUrl: it.image_url || '',
+      quantity: it.quantity,
+      price: Number(it.unit_price ?? it.price ?? 0),
+      subtotal: Number(it.subtotal ?? 0)
+    })),
+    totalAmount: Number(ord.total_amount ?? 0),
+    paymentStatus: ord.payment_status,
+    paymentMethod: ord.payment_method,
+    orderStatus: ord.order_status,
+    trackingUpdates: ord.tracking_updates || []
+  };
+}
+
 export function AppProvider({ children }) {
-  // 1. Authentication State
-  const [currentUser, setCurrentUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem('medifind_user');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [currentUser, setCurrentUser] = useState(null);
+  const [role, setRole] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [apiError, setApiError] = useState('');
 
-  const [role, setRole] = useState(() => {
-    try {
-      const savedRole = localStorage.getItem('medifind_role');
-      return savedRole || null;
-    } catch {
-      return null;
-    }
-  });
+  // Database-backed state
+  const [pharmacyAInventory, setPharmacyAInventory] = useState([]);
+  const [pharmacyBInventory, setPharmacyBInventory] = useState([]);
+  const [medicines, setMedicines] = useState([]);
+  const [comparisonList, setComparisonList] = useState([]);
+  const [prescriptions, setPrescriptions] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [adminDashboard, setAdminDashboard] = useState(null);
+  const [alertsData, setAlertsData] = useState({ expired: [], near_expiry: [], low_stock: [], counts: {} });
 
-  // 2. Medicines State
-  const [medicines, setMedicines] = useState(() => {
-    try {
-      const saved = localStorage.getItem('medifind_medicines');
-      return saved ? JSON.parse(saved) : INITIAL_MEDICINES;
-    } catch {
-      return INITIAL_MEDICINES;
-    }
-  });
-
-  // 3. Prescriptions State
-  const [prescriptions, setPrescriptions] = useState(() => {
-    try {
-      const saved = localStorage.getItem('medifind_prescriptions');
-      return saved ? JSON.parse(saved) : INITIAL_PRESCRIPTIONS;
-    } catch {
-      return INITIAL_PRESCRIPTIONS;
-    }
-  });
-
-  // 4. Orders State
-  const [orders, setOrders] = useState(() => {
-    try {
-      const saved = localStorage.getItem('medifind_orders');
-      return saved ? JSON.parse(saved) : INITIAL_ORDERS;
-    } catch {
-      return INITIAL_ORDERS;
-    }
-  });
-
-  // 5. Separate Pharmacy Carts: { [pharmacyName]: [ { medicine, quantity } ] }
+  // Separate Pharmacy Carts persisted locally until checkout
   const [carts, setCarts] = useState(() => {
     try {
       const saved = localStorage.getItem('medifind_carts');
@@ -70,259 +140,260 @@ export function AppProvider({ children }) {
     }
   });
 
-  // Persist states
-  useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem('medifind_user', JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem('medifind_user');
-    }
-  }, [currentUser]);
-
-  useEffect(() => {
-    if (role) {
-      localStorage.setItem('medifind_role', role);
-    } else {
-      localStorage.removeItem('medifind_role');
-    }
-  }, [role]);
-
-  useEffect(() => {
-    localStorage.setItem('medifind_medicines', JSON.stringify(medicines));
-  }, [medicines]);
-
-  useEffect(() => {
-    localStorage.setItem('medifind_prescriptions', JSON.stringify(prescriptions));
-  }, [prescriptions]);
-
-  useEffect(() => {
-    localStorage.setItem('medifind_orders', JSON.stringify(orders));
-  }, [orders]);
-
   useEffect(() => {
     localStorage.setItem('medifind_carts', JSON.stringify(carts));
   }, [carts]);
 
-  // Auth Functions
-  const login = (email, password, selectedRole) => {
-    if (selectedRole === 'admin') {
-      const adminData = {
-        ...DEMO_ADMIN,
-        email: email || DEMO_ADMIN.email
-      };
-      setCurrentUser(adminData);
-      setRole('admin');
-      return { success: true, user: adminData, role: 'admin' };
-    } else {
-      // User login
-      const userData = currentUser && currentUser.email === email ? currentUser : {
-        ...DEMO_USER,
-        email: email || DEMO_USER.email,
-        name: email.split('@')[0].replace('.', ' ').replace(/\b\w/g, c => c.toUpperCase())
-      };
-      setCurrentUser(userData);
-      setRole('user');
-      return { success: true, user: userData, role: 'user' };
+  // Fetch Pharmacy A & Pharmacy B separately from backend
+  const fetchPharmacyAInventory = useCallback(async () => {
+    const res = await inventoryAPI.getPharmacyA();
+    const normalized = (res.inventory || []).map(normalizeInventoryItem);
+    setPharmacyAInventory(normalized);
+    return normalized;
+  }, []);
+
+  const fetchPharmacyBInventory = useCallback(async () => {
+    const res = await inventoryAPI.getPharmacyB();
+    const normalized = (res.inventory || []).map(normalizeInventoryItem);
+    setPharmacyBInventory(normalized);
+    return normalized;
+  }, []);
+
+  const fetchInventories = useCallback(async () => {
+    const [aList, bList] = await Promise.all([
+      fetchPharmacyAInventory(),
+      fetchPharmacyBInventory()
+    ]);
+    setMedicines([...aList, ...bList]);
+  }, [fetchPharmacyAInventory, fetchPharmacyBInventory]);
+
+  const fetchComparison = useCallback(async (search = '') => {
+    const res = await medicineAPI.compare(search);
+    setComparisonList(res.comparison || []);
+    return res.comparison || [];
+  }, []);
+
+  const fetchRoleScopedData = useCallback(async (activeRole) => {
+    if (!activeRole) {
+      setPrescriptions([]);
+      setOrders([]);
+      setAdminDashboard(null);
+      setAlertsData({ expired: [], near_expiry: [], low_stock: [], counts: {} });
+      return;
     }
+
+    if (activeRole === 'admin') {
+      const [rxRes, ordRes, dashRes, alertRes] = await Promise.all([
+        prescriptionAPI.getAll(),
+        orderAPI.getAll(),
+        adminAPI.getDashboard(),
+        adminAPI.getAlerts()
+      ]);
+      setPrescriptions((rxRes.prescriptions || []).map(normalizePrescription));
+      setOrders((ordRes.orders || []).map(normalizeOrder));
+      setAdminDashboard(dashRes);
+      setAlertsData({
+        expired: (alertRes.expired || []).map(normalizeInventoryItem),
+        near_expiry: (alertRes.near_expiry || []).map(normalizeInventoryItem),
+        low_stock: (alertRes.low_stock || []).map(normalizeInventoryItem),
+        counts: alertRes.counts || {}
+      });
+    } else {
+      const [rxRes, ordRes] = await Promise.all([
+        prescriptionAPI.getMyPrescriptions(),
+        orderAPI.getMyOrders()
+      ]);
+      setPrescriptions((rxRes.prescriptions || []).map(normalizePrescription));
+      setOrders((ordRes.orders || []).map(normalizeOrder));
+    }
+  }, []);
+
+  const refreshAllData = useCallback(async (activeRole = role) => {
+    setDataLoading(true);
+    setApiError('');
+    try {
+      await Promise.all([
+        fetchInventories(),
+        fetchComparison(),
+        fetchRoleScopedData(activeRole)
+      ]);
+    } catch (err) {
+      setApiError(err.message || 'Failed to sync with backend API.');
+    } finally {
+      setDataLoading(false);
+    }
+  }, [role, fetchInventories, fetchComparison, fetchRoleScopedData]);
+
+  // Restore session from JWT on initial mount & load catalog data
+  useEffect(() => {
+    let cancelled = false;
+    async function initApp() {
+      setAuthLoading(true);
+      try {
+        const token = getAuthToken();
+        let activeRole = null;
+        if (token) {
+          try {
+            const meRes = await authAPI.getMe();
+            if (!cancelled && meRes.user) {
+              setCurrentUser(normalizeUser(meRes.user));
+              setRole(meRes.role || meRes.user.role);
+              activeRole = meRes.role || meRes.user.role;
+            }
+          } catch {
+            setAuthToken(null);
+            if (!cancelled) {
+              setCurrentUser(null);
+              setRole(null);
+            }
+          }
+        }
+        if (!cancelled) {
+          await refreshAllData(activeRole);
+        }
+      } finally {
+        if (!cancelled) setAuthLoading(false);
+      }
+    }
+    initApp();
+    return () => {
+      cancelled = true;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auth Functions
+  const login = async (email, password, selectedRole) => {
+    const res = await authAPI.login(email, password);
+    const actualRole = res.role || res.user?.role;
+
+    if (selectedRole && actualRole !== selectedRole) {
+      await authAPI.logout();
+      setCurrentUser(null);
+      setRole(null);
+      if (selectedRole === 'admin') {
+        throw new Error('Access denied. This account does not have Main Admin privileges.');
+      } else {
+        throw new Error('Please use the Main Admin Login tab for administrator accounts.');
+      }
+    }
+
+    const user = normalizeUser(res.user);
+    setCurrentUser(user);
+    setRole(actualRole);
+    await refreshAllData(actualRole);
+    return { success: true, user, role: actualRole };
   };
 
-  const register = (userData) => {
-    const newUser = {
-      id: `usr-${Date.now()}`,
-      name: userData.fullName,
+  const register = async (userData) => {
+    const res = await authAPI.register({
+      full_name: userData.fullName,
       email: userData.email,
       phone: userData.phone,
-      address: userData.address || "123 Green Avenue, Medical District",
-      role: 'user'
-    };
-    setCurrentUser(newUser);
+      password: userData.password,
+      address: userData.address || ''
+    });
+    const user = normalizeUser(res.user);
+    setCurrentUser(user);
     setRole('user');
-    return { success: true, user: newUser };
+    await refreshAllData('user');
+    return { success: true, user };
   };
 
-  const updateProfile = (profileData) => {
-    setCurrentUser(prev => ({
-      ...prev,
-      ...profileData
-    }));
+  const updateProfile = async (profileData) => {
+    const res = await userAPI.updateProfile({
+      full_name: profileData.name || profileData.fullName,
+      email: profileData.email,
+      phone: profileData.phone,
+      address: profileData.address
+    });
+    const updated = normalizeUser(res.user);
+    setCurrentUser(updated);
+    return updated;
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await authAPI.logout();
     setCurrentUser(null);
     setRole(null);
-    localStorage.removeItem('medifind_user');
-    localStorage.removeItem('medifind_role');
+    setPrescriptions([]);
+    setOrders([]);
+    setAdminDashboard(null);
+    setAlertsData({ expired: [], near_expiry: [], low_stock: [], counts: {} });
+    setCarts({ 'Pharmacy A': [], 'Pharmacy B': [] });
+    localStorage.removeItem('medifind_carts');
   };
 
-  // Medicine Management Functions
-  const addMedicine = (formData) => {
-    const {
-      name,
-      genericName,
-      strength,
-      form,
-      prescriptionRequired,
-      batchNumber,
-      quantity,
-      price,
-      mfgDate,
-      expiryDate,
-      pharmacySelection // 'Pharmacy A' | 'Pharmacy B' | 'Both Pharmacies'
-    } = formData;
+  // Medicine & Inventory Management Functions
+  const addMedicine = async (formData) => {
+    const payload = {
+      name: formData.name,
+      generic_name: formData.genericName || '',
+      strength: formData.strength,
+      form: formData.form,
+      prescription_required: Boolean(formData.prescriptionRequired),
+      batch_number: formData.batchNumber,
+      quantity: parseInt(formData.quantity, 10),
+      price: parseFloat(formData.price),
+      mfg_date: formData.mfgDate || null,
+      expiry_date: formData.expiryDate,
+      pharmacy: formData.pharmacySelection || 'Both Pharmacies'
+    };
 
-    // Validation
-    const parsedQty = parseInt(quantity, 10);
-    const parsedPrice = parseFloat(price);
-
-    if (!name || !strength || !form || !batchNumber || isNaN(parsedQty) || isNaN(parsedPrice) || !expiryDate) {
-      throw new Error("Please fill in all mandatory fields with valid values.");
-    }
-
-    if (parsedQty <= 0) {
-      throw new Error("Quantity must be greater than zero.");
-    }
-
-    if (parsedPrice <= 0) {
-      throw new Error("Price must be greater than zero.");
-    }
-
-    if (isExpired(expiryDate)) {
-      throw new Error("Cannot add expired batches as sellable inventory stock.");
-    }
-
-    const newEntries = [];
-
-    if (pharmacySelection === 'Both Pharmacies') {
-      newEntries.push({
-        id: `med-${Date.now()}-A`,
-        name,
-        genericName: genericName || '',
-        strength,
-        form,
-        prescriptionRequired: Boolean(prescriptionRequired),
-        pharmacy: 'Pharmacy A',
-        batchNumber: `${batchNumber}-A`,
-        quantity: parsedQty,
-        price: parsedPrice,
-        mfgDate: mfgDate || '',
-        expiryDate
-      });
-      newEntries.push({
-        id: `med-${Date.now()}-B`,
-        name,
-        genericName: genericName || '',
-        strength,
-        form,
-        prescriptionRequired: Boolean(prescriptionRequired),
-        pharmacy: 'Pharmacy B',
-        batchNumber: `${batchNumber}-B`,
-        quantity: parsedQty,
-        price: parsedPrice,
-        mfgDate: mfgDate || '',
-        expiryDate
-      });
-    } else {
-      newEntries.push({
-        id: `med-${Date.now()}`,
-        name,
-        genericName: genericName || '',
-        strength,
-        form,
-        prescriptionRequired: Boolean(prescriptionRequired),
-        pharmacy: pharmacySelection,
-        batchNumber,
-        quantity: parsedQty,
-        price: parsedPrice,
-        mfgDate: mfgDate || '',
-        expiryDate
-      });
-    }
-
-    setMedicines(prev => [...prev, ...newEntries]);
-    return newEntries;
+    const res = await medicineAPI.create(payload);
+    await refreshAllData(role);
+    return (res.inventories || []).map(normalizeInventoryItem);
   };
 
-  const updateMedicine = (id, updatedFields) => {
-    // Validate quantity & price if being updated
-    if (updatedFields.quantity !== undefined && parseInt(updatedFields.quantity, 10) < 0) {
-      throw new Error("Quantity cannot be negative.");
-    }
-    if (updatedFields.price !== undefined && parseFloat(updatedFields.price) <= 0) {
-      throw new Error("Price must be greater than zero.");
-    }
+  const updateMedicine = async (inventoryId, updatedFields) => {
+    const payload = {};
+    if (updatedFields.name !== undefined) payload.name = updatedFields.name;
+    if (updatedFields.genericName !== undefined) payload.generic_name = updatedFields.genericName;
+    if (updatedFields.strength !== undefined) payload.strength = updatedFields.strength;
+    if (updatedFields.form !== undefined) payload.form = updatedFields.form;
+    if (updatedFields.batchNumber !== undefined) payload.batch_number = updatedFields.batchNumber;
+    if (updatedFields.quantity !== undefined && updatedFields.quantity !== '') payload.quantity = parseInt(updatedFields.quantity, 10);
+    if (updatedFields.price !== undefined && updatedFields.price !== '') payload.price = parseFloat(updatedFields.price);
+    if (updatedFields.expiryDate !== undefined) payload.expiry_date = updatedFields.expiryDate;
+    if (updatedFields.prescriptionRequired !== undefined) payload.prescription_required = Boolean(updatedFields.prescriptionRequired);
 
-    setMedicines(prev => prev.map(m => {
-      if (m.id === id) {
-        return {
-          ...m,
-          ...updatedFields,
-          quantity: updatedFields.quantity !== undefined ? parseInt(updatedFields.quantity, 10) : m.quantity,
-          price: updatedFields.price !== undefined ? parseFloat(updatedFields.price) : m.price
-        };
-      }
-      return m;
-    }));
+    await inventoryAPI.updateBatch(inventoryId, payload);
+    await refreshAllData(role);
   };
 
-  const deleteMedicine = (id) => {
-    setMedicines(prev => prev.filter(m => m.id !== id));
+  const deleteMedicine = async (inventoryId) => {
+    await inventoryAPI.deleteBatch(inventoryId);
+    await refreshAllData(role);
   };
 
   // Prescription Management Functions
-  const uploadPrescription = (rxData) => {
-    const newRx = {
-      id: `rx-${Date.now()}`,
-      userId: currentUser?.id || 'usr-1',
-      userName: currentUser?.name || 'Rahul Verma',
-      fileName: rxData.fileName || 'prescription_upload.jpg',
-      fileType: rxData.fileType || 'image/jpeg',
-      fileSize: rxData.fileSize || '1.2 MB',
-      fileUrl: rxData.fileUrl || null,
-      uploadedAt: new Date().toISOString(),
-      status: 'Pending Verification', // OCR alone never approves
-      reviewedBy: null,
-      reviewNotes: null,
-      medicines: rxData.medicines || []
-    };
-
-    setPrescriptions(prev => [newRx, ...prev]);
-    return newRx;
+  const uploadPrescription = async (file) => {
+    const res = await prescriptionAPI.upload(file);
+    const normalized = normalizePrescription(res.prescription);
+    await fetchRoleScopedData(role);
+    return normalized;
   };
 
-  const verifyPrescription = (id, notes = "Verified by Main Admin") => {
-    setPrescriptions(prev => prev.map(rx => {
-      if (rx.id === id) {
-        return {
-          ...rx,
-          status: 'Verified',
-          reviewedBy: currentUser?.name || 'Main Admin',
-          reviewNotes: notes
-        };
-      }
-      return rx;
-    }));
+  const verifyPrescription = async (id, notes = 'Verified by Main Admin', confirmedMedicines = null) => {
+    await prescriptionAPI.verify(id, notes, confirmedMedicines);
+    await fetchRoleScopedData(role);
   };
 
-  const rejectPrescription = (id, reason) => {
-    setPrescriptions(prev => prev.map(rx => {
-      if (rx.id === id) {
-        return {
-          ...rx,
-          status: 'Rejected',
-          reviewedBy: currentUser?.name || 'Main Admin',
-          reviewNotes: reason || "Prescription rejected due to incomplete or unclear medicine details."
-        };
-      }
-      return rx;
-    }));
+  const rejectPrescription = async (id, reason) => {
+    await prescriptionAPI.reject(id, reason);
+    await fetchRoleScopedData(role);
   };
 
   // Cart Functions (Per Pharmacy)
   const addToCart = (pharmacy, medicine, quantity = 1) => {
     if (isExpired(medicine.expiryDate)) {
-      throw new Error("Cannot purchase expired medicine batches.");
+      throw new Error('Cannot purchase expired medicine batches.');
     }
-
+    if (medicine.quantity === null || medicine.quantity === undefined || medicine.quantity <= 0) {
+      throw new Error('This medicine does not have available stock.');
+    }
+    if (medicine.price === null || medicine.price === undefined) {
+      throw new Error('Price is missing for this medicine.');
+    }
     if (quantity > medicine.quantity) {
       throw new Error(`Requested quantity exceeds available stock (${medicine.quantity}).`);
     }
@@ -343,16 +414,10 @@ export function AppProvider({ children }) {
           quantity: newQty
         };
       } else {
-        updatedPharmacyCart = [
-          ...currentPharmacyCart,
-          { medicine, quantity }
-        ];
+        updatedPharmacyCart = [...currentPharmacyCart, { medicine, quantity }];
       }
 
-      return {
-        ...prev,
-        [pharmacy]: updatedPharmacyCart
-      };
+      return { ...prev, [pharmacy]: updatedPharmacyCart };
     });
   };
 
@@ -366,13 +431,12 @@ export function AppProvider({ children }) {
     setCarts(prev => {
       const currentCart = prev[pharmacy] || [];
       const item = currentCart.find(i => i.medicine.id === medicineId);
-      if (item && qty > item.medicine.quantity) {
+      if (item && item.medicine.quantity !== null && qty > item.medicine.quantity) {
         throw new Error(`Quantity cannot exceed available stock (${item.medicine.quantity}).`);
       }
-
       return {
         ...prev,
-        [pharmacy]: currentCart.map(i => i.medicine.id === medicineId ? { ...i, quantity: qty } : i)
+        [pharmacy]: currentCart.map(i => (i.medicine.id === medicineId ? { ...i, quantity: qty } : i))
       };
     });
   };
@@ -392,89 +456,54 @@ export function AppProvider({ children }) {
     }
   };
 
-  // Order Functions
-  const createOrder = ({ pharmacy, items, totalAmount, deliveryAddress, paymentStatus = "Paid", paymentMethod = "PhonePe UPI (Demo)" }) => {
-    const orderId = `ORD-${Math.floor(1000 + Math.random() * 9000)}${pharmacy === 'Pharmacy A' ? 'A' : 'B'}`;
-
-    const newOrder = {
-      id: orderId,
-      userId: currentUser?.id || 'usr-1',
-      userName: currentUser?.name || 'Rahul Verma',
-      userPhone: currentUser?.phone || '+91 98765 43210',
-      userAddress: deliveryAddress || currentUser?.address || 'Indiranagar, Bengaluru - 560038',
+  // Order & Demo Payment Functions
+  const placeOrder = async ({ pharmacy, items, deliveryAddress }) => {
+    const res = await orderAPI.create({
       pharmacy,
-      createdAt: new Date().toISOString(),
-      medicines: items.map(item => ({
-        name: `${item.medicine.name} ${item.medicine.strength}`,
-        medicineId: item.medicine.id,
-        quantity: item.quantity,
-        price: item.medicine.price,
-        subtotal: item.medicine.price * item.quantity
+      items: items.map(it => ({
+        inventory_id: it.medicine.inventoryId || it.medicine.id,
+        medicine_id: it.medicine.medicineId,
+        name: it.medicine.name,
+        quantity: it.quantity
       })),
-      totalAmount,
-      paymentStatus,
-      paymentMethod,
-      orderStatus: "Order Placed", // Initial stage
-      trackingUpdates: [
-        { stage: "Order Placed", time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), done: true },
-        { stage: "Verification", time: "Pending prescription check", done: false },
-        { stage: "Preparing", time: "Pending", done: false },
-        { stage: "Dispatched", time: "Pending", done: false },
-        { stage: "Delivered", time: "Pending", done: false }
-      ]
-    };
-
-    // Deduct stock from medicines inventory
-    setMedicines(prev => prev.map(med => {
-      const purchasedItem = items.find(it => it.medicine.id === med.id);
-      if (purchasedItem) {
-        return {
-          ...med,
-          quantity: Math.max(0, med.quantity - purchasedItem.quantity)
-        };
-      }
-      return med;
-    }));
-
-    // Clear that pharmacy's cart
-    clearCart(pharmacy);
-
-    // Add to orders
-    setOrders(prev => [newOrder, ...prev]);
-    return newOrder;
+      delivery_address: deliveryAddress || currentUser?.address,
+      payment_method: 'PhonePe UPI (Demo)'
+    });
+    const created = normalizeOrder(res.order);
+    await fetchRoleScopedData(role);
+    return created;
   };
 
-  const updateOrderStatus = (orderId, newStatus) => {
-    const STAGES = ["Order Placed", "Verification", "Preparing", "Dispatched", "Delivered"];
-    const targetIndex = STAGES.indexOf(newStatus);
+  const completeDemoPayment = async (orderId, pharmacy) => {
+    const res = await orderAPI.simulatePayment(orderId, 'Paid');
+    if (pharmacy) {
+      clearCart(pharmacy);
+    }
+    await refreshAllData(role);
+    return normalizeOrder(res.order);
+  };
 
-    setOrders(prev => prev.map(order => {
-      if (order.id === orderId) {
-        const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const updatedTracking = STAGES.map((st, idx) => {
-          if (idx <= targetIndex) {
-            return {
-              stage: st,
-              time: idx === targetIndex ? `Updated at ${now}` : "Completed",
-              done: true
-            };
-          } else {
-            return {
-              stage: st,
-              time: "Pending",
-              done: false
-            };
-          }
-        });
+  const failDemoPayment = async (orderId) => {
+    const res = await orderAPI.simulatePayment(orderId, 'Failed');
+    await fetchRoleScopedData(role);
+    return normalizeOrder(res.order);
+  };
 
-        return {
-          ...order,
-          orderStatus: newStatus,
-          trackingUpdates: updatedTracking
-        };
-      }
-      return order;
-    }));
+  const cancelDemoPayment = async (orderId) => {
+    const res = await orderAPI.simulatePayment(orderId, 'Cancelled');
+    await fetchRoleScopedData(role);
+    return normalizeOrder(res.order);
+  };
+
+  const cancelOrder = async (orderId) => {
+    const res = await orderAPI.cancel(orderId);
+    await refreshAllData(role);
+    return normalizeOrder(res.order);
+  };
+
+  const updateOrderStatus = async (orderId, newStatus) => {
+    await orderAPI.updateStatus(orderId, newStatus);
+    await refreshAllData(role);
   };
 
   return (
@@ -482,11 +511,24 @@ export function AppProvider({ children }) {
       value={{
         currentUser,
         role,
+        authLoading,
+        dataLoading,
+        apiError,
+        setApiError,
         login,
         register,
         updateProfile,
         logout,
         medicines,
+        pharmacyAInventory,
+        pharmacyBInventory,
+        comparisonList,
+        adminDashboard,
+        alertsData,
+        fetchPharmacyAInventory,
+        fetchPharmacyBInventory,
+        fetchComparison,
+        refreshAllData,
         addMedicine,
         updateMedicine,
         deleteMedicine,
@@ -500,7 +542,11 @@ export function AppProvider({ children }) {
         removeFromCart,
         clearCart,
         orders,
-        createOrder,
+        placeOrder,
+        completeDemoPayment,
+        failDemoPayment,
+        cancelDemoPayment,
+        cancelOrder,
         updateOrderStatus
       }}
     >
