@@ -212,22 +212,26 @@ def _execute_test_suite(app, test_db_path, test_upload_dir):
     comp_list = res.get_json()['comparison']
     amx = next((m for m in comp_list if m['name'] == 'Amoxicillin' and m['strength'] == '500mg'), None)
     assert amx is not None
-    assert amx['pharmacy_a']['available'] is True and amx['pharmacy_a']['stock'] > 0
-    assert amx['pharmacy_b']['available'] is True and amx['pharmacy_b']['stock'] > 0
-    # Expired Cough Relief Syrup must NOT be marked available
-    res_crs = client.get('/api/medicines/compare?search=Cough%20Relief%20Syrup')
-    crs = res_crs.get_json()['comparison'][0]
-    assert crs['pharmacy_a']['available'] is False
-    assert crs['pharmacy_a']['status'] == 'Expired (Blocked)'
-    print("[8/25] Dual Pharmacy Comparison & Expired Quarantine: OK")
+    assert amx['pharmacy_a']['available'] is True and amx['pharmacy_a']['stock'] == 183
+    assert amx['pharmacy_b']['available'] is True and amx['pharmacy_b']['stock'] == 157
+    # Expired Doxycycline 100mg in Pharmacy A (BN79697) must NOT be marked available
+    res_dox = client.get('/api/medicines/compare?search=Doxycycline%20100mg')
+    dox = res_dox.get_json()['comparison'][0]
+    assert dox['pharmacy_a']['available'] is False
+    assert dox['pharmacy_a']['status'] == 'Expired (Blocked)'
+    assert dox['pharmacy_b']['available'] is True and dox['pharmacy_b']['stock'] == 12
+    print("[8/34] Dual Pharmacy Comparison & Expired Quarantine: OK")
 
-    # 9. Pharmacy A & B Dedicated Inventory Views (No Duplicates)
+    # 9. Pharmacy A & B Dedicated Inventory Views (Exact 50 + 50, No Legacy Duplicates)
     res_a = client.get('/api/inventory/pharmacy-a')
     res_b = client.get('/api/inventory/pharmacy-b')
     assert res_a.status_code == 200 and res_b.status_code == 200
-    assert len(res_a.get_json()['inventory']) >= 58
-    assert len(res_b.get_json()['inventory']) >= 138
-    print("[9/25] Pharmacy A & B Dedicated Inventory Views: OK")
+    inv_a_list = res_a.get_json()['inventory']
+    inv_b_list = res_b.get_json()['inventory']
+    assert len(inv_a_list) == 51, f"Expected 51 Pharmacy A rows (50 dataset + 1 added Cefixime), got {len(inv_a_list)}"
+    assert len(inv_b_list) == 51, f"Expected 51 Pharmacy B rows (50 dataset + 1 added Cefixime), got {len(inv_b_list)}"
+    assert not any(i.get('batch_number') == 'CRS-2025-A1' for i in inv_a_list)
+    print("[9/34] Pharmacy A & B Dedicated Inventory Views (50+50 Dataset): OK")
 
     # 10. Upload Security: Reject spoofed/corrupted files
     spoofed = (io.BytesIO(b"<html><script>alert(1)</script></html>"), "fake.jpg")
@@ -239,7 +243,7 @@ def _execute_test_suite(app, test_db_path, test_upload_dir):
     print("[10/25] Upload Security (Spoofed JPG & Invalid PDF Rejected): OK")
 
     # 11. Prescription Upload: Valid PNG with clinical text, JPG, JPEG, and PDF
-    png_file = (_make_png_bytes("Amoxicillin 500mg Twice daily 5 days\nParacetamol 650mg SOS 3 days"), "rx_valid.png")
+    png_file = (_make_png_bytes("Amoxicillin 500mg Twice daily 5 days\nParacetamol 500mg SOS 3 days"), "rx_valid.png")
     res_png = client.post('/api/prescriptions/upload', headers={'Authorization': f'Bearer {user_token}'}, data={'file': png_file}, content_type='multipart/form-data')
     assert res_png.status_code == 201, f"PNG upload failed: {res_png.data}"
     rx_json = res_png.get_json()['prescription']
@@ -256,12 +260,12 @@ def _execute_test_suite(app, test_db_path, test_upload_dir):
         assert meds[0]['name'] == 'Unable to detect – manual confirmation required.'
 
     # Valid PDF upload with real PDF text extraction
-    pdf_file = (_make_pdf_bytes("Atorvastatin 20mg Once daily 30 days"), "cardio_rx.pdf")
+    pdf_file = (_make_pdf_bytes("Atorvastatin 10mg Once daily 30 days"), "cardio_rx.pdf")
     res_pdf = client.post('/api/prescriptions/upload', headers={'Authorization': f'Bearer {user_token}'}, data={'file': pdf_file}, content_type='multipart/form-data')
     assert res_pdf.status_code == 201, f"PDF upload failed: {res_pdf.data}"
     pdf_meds = res_pdf.get_json()['prescription']['medicines']
-    assert any(m['name'] == 'Atorvastatin' and m['strength'] == '20mg' for m in pdf_meds), f"PDF OCR failed: {pdf_meds}"
-    print("[11/25] Prescription Upload (PNG, JPG, JPEG, PDF + Safe Unclear Fallback): OK")
+    assert any(m['name'] == 'Atorvastatin' and m['strength'] == '10mg' for m in pdf_meds), f"PDF OCR failed: {pdf_meds}"
+    print("[11/34] Prescription Upload (PNG, JPG, JPEG, PDF + Safe Unclear Fallback): OK")
 
     # 12. Prescription File Download Security
     assert client.get(f'/api/prescriptions/file/{rx_file_path}').status_code == 401
@@ -277,7 +281,7 @@ def _execute_test_suite(app, test_db_path, test_upload_dir):
         amx_pharma = amx_inv.pharmacy.name
         amx_initial_qty = amx_inv.quantity
 
-        expired_inv = Inventory.query.filter(Inventory.batch_number == 'CRS-2025-A1').first()
+        expired_inv = Inventory.query.filter(Inventory.batch_number == 'BN79697').first()
         expired_inv_id = expired_inv.id
 
     res_rx_block = client.post('/api/orders', headers={'Authorization': f'Bearer {user_token}'}, json={
@@ -495,38 +499,48 @@ def _execute_test_suite(app, test_db_path, test_upload_dir):
 
     # 30. OCR Extended Dosage, Strength & Frequency Extraction
     res_ocr_ext = client.post('/api/prescriptions/upload', headers={'Authorization': f'Bearer {user_token}'}, data={
-        'file': (_make_png_bytes("Paracetamol Tab 650mg 2 tablets BD 5 days"), "extended_rx.png")
+        'file': (_make_png_bytes("Paracetamol Tab 500mg 2 tablets BD 5 days"), "extended_rx.png")
     }, content_type='multipart/form-data')
     assert res_ocr_ext.status_code == 201
     ext_med = res_ocr_ext.get_json()['prescription']['medicines'][0]
     assert ext_med['name'] == 'Paracetamol'
-    assert ext_med['strength'] == '650mg'
+    assert ext_med['strength'] == '500mg'
     assert ext_med['dosage'] == '2 tablets'
     assert ext_med['frequency'] == 'Twice daily after meals'
     assert ext_med['duration'] == '5 days'
-    print("[30/33] OCR Dosage, Form-Separated Strength & Frequency Extraction: OK")
+    print("[30/34] OCR Dosage, Form-Separated Strength & Frequency Extraction: OK")
 
     # 31. JSON Error Handlers (400 Malformed JSON & 405 Method Not Allowed)
     res_bad_json = client.post('/api/auth/login', data="{bad json", content_type='application/json')
     assert res_bad_json.status_code == 400 and 'error' in res_bad_json.get_json()
     res_405 = client.delete('/api/health')
     assert res_405.status_code == 405 and 'error' in res_405.get_json()
-    print("[31/33] JSON 400 & 405 Error Handlers: OK")
+    print("[31/34] JSON 400 & 405 Error Handlers: OK")
 
     # 32. Password Hash Verification in DB
     from models.user import User
     with app.app_context():
         u = User.query.filter_by(email=test_user_email).first()
         assert u is not None and u.password_hash != 'password123' and u.check_password('password123')
-    print("[32/33] Password Hashing Verification: OK")
+    print("[32/34] Password Hashing Verification: OK")
 
     # 33. Logout Endpoint
     res_logout = client.post('/api/auth/logout', headers={'Authorization': f'Bearer {user_token}'})
     assert res_logout.status_code == 200
-    print("[33/33] Auth Logout Endpoint: OK")
+    print("[33/34] Auth Logout Endpoint: OK")
+
+    # 34. Verify Exact 50+50 Dataset Counts & Expiry Breakdown (3 expired, 5 near expiry each)
+    res_a_final = client.get('/api/inventory/pharmacy-a').get_json()['inventory']
+    res_b_final = client.get('/api/inventory/pharmacy-b').get_json()['inventory']
+    assert len(res_a_final) == 50 and len(res_b_final) == 50
+    assert sum(1 for i in res_a_final if i['is_expired']) == 3
+    assert sum(1 for i in res_a_final if i['is_near_expiry']) == 5
+    assert sum(1 for i in res_b_final if i['is_expired']) == 3
+    assert sum(1 for i in res_b_final if i['is_near_expiry']) == 5
+    print("[34/34] Verified 50+50 Dataset Integrity (3 Expired + 5 Near Expiry per Pharmacy): OK")
 
     print("\n" + "=" * 70)
-    print("ALL 33 MEDIFIND AI BACKEND TESTS PASSED SUCCESSFULLY!")
+    print("ALL 34 MEDIFIND AI BACKEND TESTS PASSED SUCCESSFULLY!")
     print("=" * 70 + "\n")
 
 

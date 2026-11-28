@@ -44,12 +44,12 @@ export function MedicinesManagementPage() {
   const [isSaving, setIsSaving] = useState(false);
 
   const filteredMedicines = medicines.filter(m => {
-    const q = searchTerm.toLowerCase();
-    const matchesSearch =
-      m.name.toLowerCase().includes(q) ||
-      (m.batchNumber || '').toLowerCase().includes(q) ||
-      (m.genericName || '').toLowerCase().includes(q) ||
-      (m.category || '').toLowerCase().includes(q);
+    const tokens = searchTerm.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    const haystack = [m.name, m.strength, m.form, m.batchNumber, m.genericName, m.category]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const matchesSearch = tokens.length === 0 || tokens.every(tok => haystack.includes(tok));
 
     const matchesPharmacy = selectedPharmacy === 'ALL' || m.pharmacy === selectedPharmacy;
     return matchesSearch && matchesPharmacy;

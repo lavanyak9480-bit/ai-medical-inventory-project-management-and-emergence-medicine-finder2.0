@@ -1,271 +1,270 @@
 """
-Pharmacy A and Pharmacy B PDF Catalog Importer.
+Pharmacy A and Pharmacy B Verified Dataset Importer (50 + 50 Medicines).
 
-Strictly preserves only fields present in the two provided PDFs:
-- Pharmacy A (pharamacy a.pdf): 58 entries across 6 categories (A-F).
-- Pharmacy B (pharamacy b.pdf): 138 entries (58 base entries + 80 expanded entries across 8 categories).
-
-Does NOT invent missing strengths, batch numbers, quantities, prices, or expiry dates.
-Records missing fields explicitly in `missing_fields` and prevents duplicate imports.
+Replaces the previous legacy catalog dataset with the verified 50-medicine
+Pharmacy A inventory and 50-medicine Pharmacy B inventory, preserving exact
+batch numbers, stock quantities, INR prices, manufacture dates, and expiry dates.
 """
 
 import json
+from datetime import date
 from models import db
 from models.medicine import Medicine
 from models.inventory import Inventory
 from models.pharmacy import Pharmacy
 from utils.medicine_images import resolve_medicine_image
 
+OLD_DATA_SOURCES = ('Seeded Sample', 'Pharmacy A PDF', 'Pharmacy B PDF')
+OLD_SAMPLE_BATCHES = {
+    'AMX-2026-A1', 'AMX-2026-B4', 'PCM-2026-A8', 'PCM-2026-B2',
+    'AZI-2026-A3', 'AZI-2026-B9', 'PAN-2026-A5', 'PAN-2026-B1',
+    'MET-2026-A2', 'MET-2026-B7', 'ATV-2026-A9', 'ATV-2026-B3',
+    'CTZ-2026-A6', 'CTZ-2026-B8', 'CRS-2025-A1', 'INS-2026-B5',
+    'DIC-2026-A4',
+}
 
-def _is_rx_required(status_text):
-    if not status_text:
-        return False
-    s = status_text.strip().lower()
-    if s.startswith('rx') or s.startswith('usually rx') or s.startswith('clinician-directed'):
-        return True
-    if 'tablet usually rx' in s:
-        return True
-    return False
+# Canonical metadata for all 54 unique medicines across Pharmacy A & Pharmacy B:
+# key -> (name, generic_name, strength, form, category, indication, rx_required, rx_status)
+MEDICINE_CATALOG = {
+    "Paracetamol 500mg": ("Paracetamol", "Acetaminophen", "500mg", "Tablet", "Pain & Fever Relief", "Fever and mild to moderate pain", False, "Non-prescription (OTC)"),
+    "Ibuprofen 400mg": ("Ibuprofen", "Ibuprofen", "400mg", "Tablet", "Pain & Inflammation", "Pain, fever, and inflammation", False, "Non-prescription (OTC)"),
+    "Amoxicillin 500mg": ("Amoxicillin", "Amoxicillin Trihydrate", "500mg", "Capsule", "Antibiotics", "Susceptible bacterial infections", True, "Rx"),
+    "Cetirizine 10mg": ("Cetirizine", "Cetirizine Dihydrochloride", "10mg", "Tablet", "Allergy & Antihistamine", "Allergic rhinitis, sneezing, and itching", False, "Non-prescription (OTC)"),
+    "Omeprazole 20mg": ("Omeprazole", "Omeprazole Magnesium", "20mg", "Capsule", "Digestive & Acid Care", "Acid reflux, GERD, and peptic ulcer", True, "Rx"),
+    "ORS Powder": ("ORS", "Oral Rehydration Salts", None, "Powder", "Hydration & Electrolytes", "Rehydration and electrolyte replacement", False, "Non-prescription (OTC)"),
+    "Cough Syrup 100ml": ("Cough Syrup", "Dextromethorphan + Chlorpheniramine", "100ml", "Syrup", "Respiratory & Cough", "Dry and productive cough relief", False, "Non-prescription (OTC)"),
+    "Azithromycin 500mg": ("Azithromycin", "Azithromycin Dihydrate", "500mg", "Tablet", "Antibiotics", "Respiratory and bacterial infections", True, "Rx"),
+    "Vitamin C 500mg": ("Vitamin C", "Ascorbic Acid", "500mg", "Tablet", "Vitamins & Supplements", "Vitamin C supplementation and immunity", False, "Non-prescription (OTC)"),
+    "Antacid Gel 170ml": ("Antacid Gel", "Aluminium Hydroxide + Magnesium Hydroxide + Simethicone", "170ml", "Gel", "Digestive & Acid Care", "Acidity, heartburn, and gas relief", False, "Non-prescription (OTC)"),
+    "Diclofenac 50mg": ("Diclofenac", "Diclofenac Sodium", "50mg", "Tablet", "Pain & Inflammation", "Acute pain and inflammatory conditions", True, "Rx"),
+    "Pantoprazole 40mg": ("Pantoprazole", "Pantoprazole Sodium", "40mg", "Tablet", "Digestive & Acid Care", "Acid reflux and gastric ulcer care", True, "Rx"),
+    "Metformin 500mg": ("Metformin", "Metformin Hydrochloride", "500mg", "Tablet", "Diabetes Care", "Type 2 diabetes management", True, "Rx"),
+    "Amlodipine 5mg": ("Amlodipine", "Amlodipine Besylate", "5mg", "Tablet", "Blood Pressure & Cardio", "Hypertension and angina", True, "Rx"),
+    "Atorvastatin 10mg": ("Atorvastatin", "Atorvastatin Calcium", "10mg", "Tablet", "Blood Pressure & Cardio", "Cholesterol management and cardioprotection", True, "Rx"),
+    "Losartan 50mg": ("Losartan", "Losartan Potassium", "50mg", "Tablet", "Blood Pressure & Cardio", "High blood pressure and kidney protection", True, "Rx"),
+    "Levocetirizine 5mg": ("Levocetirizine", "Levocetirizine Dihydrochloride", "5mg", "Tablet", "Allergy & Antihistamine", "Allergic rhinitis and chronic urticaria", True, "Rx"),
+    "Montelukast 10mg": ("Montelukast", "Montelukast Sodium", "10mg", "Tablet", "Respiratory & Cough", "Asthma prophylaxis and allergic rhinitis", True, "Rx"),
+    "Domperidone 10mg": ("Domperidone", "Domperidone Maleate", "10mg", "Tablet", "Digestive & Acid Care", "Nausea, vomiting, and gastric motility", True, "Rx"),
+    "Ranitidine 150mg": ("Ranitidine", "Ranitidine Hydrochloride", "150mg", "Tablet", "Digestive & Acid Care", "Gastric acid reduction", True, "Rx"),
+    "Ciprofloxacin 500mg": ("Ciprofloxacin", "Ciprofloxacin Hydrochloride", "500mg", "Tablet", "Antibiotics", "Urinary tract and bacterial infections", True, "Rx"),
+    "Doxycycline 100mg": ("Doxycycline", "Doxycycline Hyclate", "100mg", "Capsule", "Antibiotics", "Bacterial respiratory and skin infections", True, "Rx"),
+    "Cefixime 200mg": ("Cefixime", "Cefixime Trihydrate", "200mg", "Tablet", "Antibiotics", "Susceptible bacterial infections", True, "Rx"),
+    "Metronidazole 400mg": ("Metronidazole", "Metronidazole", "400mg", "Tablet", "Antibiotics", "Anaerobic bacterial and protozoal infections", True, "Rx"),
+    "Fluconazole 150mg": ("Fluconazole", "Fluconazole", "150mg", "Tablet", "Antifungal", "Fungal and candidal infections", True, "Rx"),
+    "Aspirin 75mg": ("Aspirin", "Acetylsalicylic Acid", "75mg", "Tablet", "Blood Pressure & Cardio", "Low-dose antiplatelet cardioprotection", True, "Rx"),
+    "Clopidogrel 75mg": ("Clopidogrel", "Clopidogrel Bisulfate", "75mg", "Tablet", "Blood Pressure & Cardio", "Antiplatelet prevention of thrombosis", True, "Rx"),
+    "Telmisartan 40mg": ("Telmisartan", "Telmisartan", "40mg", "Tablet", "Blood Pressure & Cardio", "Hypertension and cardiovascular risk reduction", True, "Rx"),
+    "Glimepiride 2mg": ("Glimepiride", "Glimepiride", "2mg", "Tablet", "Diabetes Care", "Type 2 diabetes glycemic control", True, "Rx"),
+    "Folic Acid 5mg": ("Folic Acid", "Folic Acid (Vitamin B9)", "5mg", "Tablet", "Vitamins & Supplements", "Folate deficiency and anaemia support", False, "Non-prescription (OTC)"),
+    "Vitamin B12 Tablet": ("Vitamin B12", "Cyanocobalamin / Methylcobalamin", None, "Tablet", "Vitamins & Supplements", "Vitamin B12 deficiency and nerve support", False, "Non-prescription (OTC)"),
+    "Calcium + D3": ("Calcium + D3", "Calcium Carbonate + Cholecalciferol", None, "Tablet", "Vitamins & Supplements", "Bone strength and calcium/vitamin D supplementation", False, "Non-prescription (OTC)"),
+    "Zinc 50mg": ("Zinc", "Zinc Sulfate", "50mg", "Tablet", "Vitamins & Supplements", "Zinc supplementation and recovery support", False, "Non-prescription (OTC)"),
+    "Multivitamin Capsule": ("Multivitamin", "Multivitamin & Mineral Complex", None, "Capsule", "Vitamins & Supplements", "Daily nutritional supplementation", False, "Non-prescription (OTC)"),
+    "Iron + Folic Acid": ("Iron + Folic Acid", "Ferrous Ascorbate + Folic Acid", None, "Tablet", "Vitamins & Supplements", "Iron-deficiency anaemia management", False, "Non-prescription (OTC)"),
+    "Loperamide 2mg": ("Loperamide", "Loperamide Hydrochloride", "2mg", "Capsule", "Digestive & Acid Care", "Acute non-infectious diarrhoea control", False, "Non-prescription (OTC)"),
+    "Ondansetron 4mg": ("Ondansetron", "Ondansetron Hydrochloride", "4mg", "Tablet", "Digestive & Acid Care", "Prevention and control of nausea and vomiting", True, "Rx"),
+    "Salbutamol Syrup": ("Salbutamol", "Salbutamol Sulfate", None, "Syrup", "Respiratory & Cough", "Bronchodilation in bronchospasm and asthma", True, "Rx"),
+    "Ambroxol Syrup": ("Ambroxol", "Ambroxol Hydrochloride", None, "Syrup", "Respiratory & Cough", "Mucolytic relief for productive cough", False, "Non-prescription (OTC)"),
+    "Paracetamol Syrup 60ml": ("Paracetamol Syrup", "Acetaminophen Paediatric Suspension", "60ml", "Syrup", "Pain & Fever Relief", "Paediatric fever and pain relief", False, "Non-prescription (OTC)"),
+    "Lactulose Solution": ("Lactulose", "Lactulose Oral Solution", None, "Solution", "Digestive & Acid Care", "Constipation and hepatic encephalopathy", False, "Non-prescription (OTC)"),
+    "Digene Antacid Syrup": ("Digene Antacid", "Magnesium Hydroxide + Simethicone + Sodium Carboxymethylcellulose", None, "Syrup", "Digestive & Acid Care", "Acidity, indigestion, and bloating", False, "Non-prescription (OTC)"),
+    "Dextromethorphan Syrup": ("Dextromethorphan", "Dextromethorphan Hydrobromide", None, "Syrup", "Respiratory & Cough", "Dry cough suppression", False, "Non-prescription (OTC)"),
+    "Budecort 1mg Inhaler": ("Budecort", "Budesonide", "1mg", "Inhaler", "Respiratory & Cough", "Airway inflammation control in asthma", True, "Rx"),
+    "Glucose D Powder": ("Glucose D", "Dextrose Monohydrate + Vitamin D", None, "Powder", "Hydration & Electrolytes", "Instant energy and hydration replenishment", False, "Non-prescription (OTC)"),
+    "Electral ORS": ("Electral ORS", "WHO Oral Rehydration Salts", None, "Powder", "Hydration & Electrolytes", "Electrolyte and fluid replacement", False, "Non-prescription (OTC)"),
+    "Pantoprazole Sachet": ("Pantoprazole Sachet", "Pantoprazole Sodium Granules", None, "Sachet", "Digestive & Acid Care", "Rapid acid reflux relief", True, "Rx"),
+    "Levothyroxine 50mcg": ("Levothyroxine", "Levothyroxine Sodium", "50mcg", "Tablet", "Thyroid Care", "Hypothyroidism hormone replacement", True, "Rx"),
+    "Dolo 650mg": ("Dolo", "Paracetamol 650mg", "650mg", "Tablet", "Pain & Fever Relief", "Fever and body ache relief", False, "Non-prescription (OTC)"),
+    "Doxoflow M": ("Doxoflow M", "Doxofylline + Montelukast", None, "Tablet", "Respiratory & Cough", "Asthma and chronic airway obstruction", True, "Rx"),
+    "Crocin Advance": ("Crocin Advance", "Paracetamol Fast-Release", None, "Tablet", "Pain & Fever Relief", "Fast fever and headache relief", False, "Non-prescription (OTC)"),
+    "Povidone Iodine Solution": ("Povidone Iodine", "Povidone-Iodine 5% / 10%", None, "Solution", "Antiseptic & Wound Care", "Topical antiseptic wound cleansing", False, "Non-prescription (OTC)"),
+    "Becosules Capsule": ("Becosules", "Vitamin B-Complex + Vitamin C", None, "Capsule", "Vitamins & Supplements", "B-complex and vitamin C deficiency", False, "Non-prescription (OTC)"),
+    "Rabeprazole 20mg": ("Rabeprazole", "Rabeprazole Sodium", "20mg", "Tablet", "Digestive & Acid Care", "Acid reflux and peptic ulcer disease", True, "Rx"),
+}
 
-
-# Pharmacy A PDF (pages 1-8): 58 entries
-PHARMACY_A_ENTRIES = [
-    # A. General medicines and syrups (20)
-    ("PA-A-01", "Paracetamol", None, "Tablet", "General medicines and syrups", "Fever and mild pain", "OTC status varies"),
-    ("PA-A-02", "Cetirizine", None, "Tablet", "General medicines and syrups", "Allergy symptoms such as sneezing and itching", "OTC status varies"),
-    ("PA-A-03", "Loratadine", None, "Tablet", "General medicines and syrups", "Allergic rhinitis and hives", "OTC status varies"),
-    ("PA-A-04", "Calcium carbonate", None, "Tablet", "General medicines and syrups", "Calcium supplementation; some products relieve acidity", "OTC status varies"),
-    ("PA-A-05", "Ferrous sulfate", None, "Tablet", "General medicines and syrups", "Iron-deficiency anaemia", "Usually Rx / pharmacist guidance"),
-    ("PA-A-06", "Vitamin B-complex", None, "Tablet", "General medicines and syrups", "Vitamin B deficiency prevention or treatment", "Product-dependent"),
-    ("PA-A-07", "Vitamin C (ascorbic acid)", None, "Tablet", "General medicines and syrups", "Vitamin C supplementation", "Product-dependent"),
-    ("PA-A-08", "Pantoprazole", None, "Tablet", "General medicines and syrups", "Acid reflux and stomach-ulcer conditions", "Usually Rx"),
-    ("PA-A-09", "Famotidine", None, "Tablet", "General medicines and syrups", "Acidity and acid-related indigestion", "Product-dependent"),
-    ("PA-A-10", "Loperamide", None, "Tablet/capsule", "General medicines and syrups", "Short-term control of diarrhoea in selected cases", "OTC status varies"),
-    ("PA-A-11", "Dextromethorphan", None, "Syrup", "General medicines and syrups", "Dry cough symptom relief", "Age/product restrictions apply"),
-    ("PA-A-12", "Guaifenesin", None, "Syrup", "General medicines and syrups", "Helps loosen mucus in chesty cough", "Product-dependent"),
-    ("PA-A-13", "Ambroxol", None, "Syrup", "General medicines and syrups", "Mucus-thinning medicine for productive cough", "Usually Rx / varies"),
-    ("PA-A-14", "Cetirizine", None, "Syrup", "General medicines and syrups", "Allergy symptoms", "OTC status varies"),
-    ("PA-A-15", "Paracetamol", None, "Syrup/suspension", "General medicines and syrups", "Fever and mild pain", "OTC status varies"),
-    ("PA-A-16", "Antacid combination (aluminium hydroxide + magnesium hydroxide)", None, "Suspension", "General medicines and syrups", "Acidity and heartburn symptoms", "OTC status varies"),
-    ("PA-A-17", "Lactulose", None, "Syrup", "General medicines and syrups", "Constipation", "Usually Rx / pharmacist guidance"),
-    ("PA-A-18", "ORS (oral rehydration salts)", None, "Oral solution/sachet", "General medicines and syrups", "Prevention and treatment of dehydration from fluid loss", "Non-prescription product"),
-    ("PA-A-19", "Zinc sulfate", None, "Syrup", "General medicines and syrups", "Zinc supplementation; used in some diarrhoea care plans", "Product-dependent"),
-    ("PA-A-20", "Calamine", None, "Lotion", "General medicines and syrups", "Itchy skin irritation", "Non-prescription product"),
-
-    # B. Diabetes medicines (10)
-    ("PA-B-01", "Metformin", None, "Tablet", "Diabetes medicines", "Type 2 diabetes", "Rx"),
-    ("PA-B-02", "Glimepiride", None, "Tablet", "Diabetes medicines", "Type 2 diabetes", "Rx"),
-    ("PA-B-03", "Gliclazide", None, "Tablet", "Diabetes medicines", "Type 2 diabetes", "Rx"),
-    ("PA-B-04", "Glipizide", None, "Tablet", "Diabetes medicines", "Type 2 diabetes", "Rx"),
-    ("PA-B-05", "Sitagliptin", None, "Tablet", "Diabetes medicines", "Type 2 diabetes", "Rx"),
-    ("PA-B-06", "Linagliptin", None, "Tablet", "Diabetes medicines", "Type 2 diabetes", "Rx"),
-    ("PA-B-07", "Vildagliptin", None, "Tablet", "Diabetes medicines", "Type 2 diabetes", "Rx"),
-    ("PA-B-08", "Empagliflozin", None, "Tablet", "Diabetes medicines", "Type 2 diabetes; may also be prescribed for selected heart/kidney conditions", "Rx"),
-    ("PA-B-09", "Dapagliflozin", None, "Tablet", "Diabetes medicines", "Type 2 diabetes; may also be prescribed for selected heart/kidney conditions", "Rx"),
-    ("PA-B-10", "Pioglitazone", None, "Tablet", "Diabetes medicines", "Type 2 diabetes", "Rx"),
-
-    # C. Blood-pressure medicines (10)
-    ("PA-C-01", "Amlodipine", None, "Tablet", "Blood-pressure medicines", "High blood pressure; some forms also treat angina", "Rx"),
-    ("PA-C-02", "Telmisartan", None, "Tablet", "Blood-pressure medicines", "High blood pressure", "Rx"),
-    ("PA-C-03", "Losartan", None, "Tablet", "Blood-pressure medicines", "High blood pressure; selected kidney/heart indications", "Rx"),
-    ("PA-C-04", "Olmesartan", None, "Tablet", "Blood-pressure medicines", "High blood pressure", "Rx"),
-    ("PA-C-05", "Enalapril", None, "Tablet", "Blood-pressure medicines", "High blood pressure and some heart conditions", "Rx"),
-    ("PA-C-06", "Ramipril", None, "Tablet/capsule", "Blood-pressure medicines", "High blood pressure and selected heart/kidney conditions", "Rx"),
-    ("PA-C-07", "Atenolol", None, "Tablet", "Blood-pressure medicines", "High blood pressure and selected heart conditions", "Rx"),
-    ("PA-C-08", "Metoprolol", None, "Tablet", "Blood-pressure medicines", "High blood pressure and selected heart conditions", "Rx"),
-    ("PA-C-09", "Hydrochlorothiazide", None, "Tablet", "Blood-pressure medicines", "High blood pressure and fluid retention", "Rx"),
-    ("PA-C-10", "Chlorthalidone", None, "Tablet", "Blood-pressure medicines", "High blood pressure and fluid retention", "Rx"),
-
-    # D. Thyroid medicines (10 inventory SKUs)
-    ("PA-D-01", "Levothyroxine", "25 microgram", "Tablet", "Thyroid medicines", "Underactive thyroid (hypothyroidism)", "Rx"),
-    ("PA-D-02", "Levothyroxine", "50 microgram", "Tablet", "Thyroid medicines", "Underactive thyroid (hypothyroidism)", "Rx"),
-    ("PA-D-03", "Levothyroxine", "75 microgram", "Tablet", "Thyroid medicines", "Underactive thyroid (hypothyroidism)", "Rx"),
-    ("PA-D-04", "Levothyroxine", "100 microgram", "Tablet", "Thyroid medicines", "Underactive thyroid (hypothyroidism)", "Rx"),
-    ("PA-D-05", "Levothyroxine", "125 microgram", "Tablet", "Thyroid medicines", "Underactive thyroid (hypothyroidism)", "Rx"),
-    ("PA-D-06", "Levothyroxine", "150 microgram", "Tablet", "Thyroid medicines", "Underactive thyroid (hypothyroidism)", "Rx"),
-    ("PA-D-07", "Carbimazole", "5 mg", "Tablet", "Thyroid medicines", "Overactive thyroid (hyperthyroidism)", "Rx"),
-    ("PA-D-08", "Carbimazole", "10 mg", "Tablet", "Thyroid medicines", "Overactive thyroid (hyperthyroidism)", "Rx"),
-    ("PA-D-09", "Methimazole", None, "Tablet", "Thyroid medicines", "Overactive thyroid (hyperthyroidism)", "Rx; availability varies"),
-    ("PA-D-10", "Propylthiouracil (PTU)", None, "Tablet", "Thyroid medicines", "Overactive thyroid in selected situations", "Rx"),
-
-    # E. Period-cramp medicines (5)
-    ("PA-E-01", "Paracetamol", None, "Tablet", "Period-cramp medicines", "Period pain (menstrual cramps)", "OTC status varies"),
-    ("PA-E-02", "Ibuprofen", None, "Tablet", "Period-cramp medicines", "Period pain and inflammation", "OTC status varies; safety screening needed"),
-    ("PA-E-03", "Naproxen", None, "Tablet", "Period-cramp medicines", "Period pain and inflammation", "Usually Rx / varies"),
-    ("PA-E-04", "Mefenamic acid", None, "Tablet/capsule", "Period-cramp medicines", "Period pain", "Usually Rx"),
-    ("PA-E-05", "Hyoscine butylbromide", None, "Tablet", "Period-cramp medicines", "Abdominal cramping/spasm; not a specific treatment for every cause of period pain", "Product-dependent"),
-
-    # F. Eye and ear drops (3)
-    ("PA-F-01", "Carboxymethylcellulose", None, "Eye drops", "Eye and ear drops", "Dry-eye symptoms / lubrication", "Product-dependent"),
-    ("PA-F-02", "Olopatadine", None, "Eye drops", "Eye and ear drops", "Allergic eye itching", "Usually Rx / varies"),
-    ("PA-F-03", "Carbamide peroxide", None, "Ear drops", "Eye and ear drops", "Softening and removal of earwax", "Product-dependent; pharmacist guidance"),
+# Pharmacy A - Medicine Inventory (50 Medicines: 3 expired, 5 near expiry, 42 safe)
+PHARMACY_A_DATASET = [
+    ("PA-01", "Paracetamol 500mg",      "BN12827", 194,  17.85, "2026-02-26", "2028-02-26"),
+    ("PA-02", "Ibuprofen 400mg",        "BN53496", 164,  33.02, "2024-07-02", "2027-07-02"),
+    ("PA-03", "Amoxicillin 500mg",      "BN98858", 183,  81.31, "2025-12-28", "2028-12-27"),
+    ("PA-04", "Cetirizine 10mg",        "BN51391", 104,  24.95, "2026-09-01", "2028-08-31"),
+    ("PA-05", "Omeprazole 20mg",        "BN43578",  21,  47.02, "2025-06-24", "2027-06-24"),
+    ("PA-06", "ORS Powder",             "BN81967", 224,  21.71, "2025-05-15", "2027-05-15"),
+    ("PA-07", "Cough Syrup 100ml",      "BN16124", 102,  78.96, "2026-08-03", "2028-08-02"),
+    ("PA-08", "Azithromycin 500mg",     "BN70582", 186, 110.14, "2025-01-03", "2028-01-03"),
+    ("PA-09", "Vitamin C 500mg",        "BN70666",  65,  30.27, "2026-01-08", "2028-01-08"),
+    ("PA-10", "Antacid Gel 170ml",      "BN14801", 231,  99.24, "2025-02-23", "2028-02-23"),
+    ("PA-11", "Diclofenac 50mg",        "BN77224", 195,  29.17, "2025-04-10", "2028-04-09"),
+    ("PA-12", "Pantoprazole 40mg",      "BN81453",  57,  58.87, "2026-04-16", "2029-04-15"),
+    ("PA-13", "Metformin 500mg",        "BN20249",  86,  22.49, "2025-10-25", "2027-10-25"),
+    ("PA-14", "Amlodipine 5mg",         "BN16363",  51,  31.46, "2024-10-09", "2027-10-09"),
+    ("PA-15", "Atorvastatin 10mg",      "BN41108", 186,  72.28, "2025-05-29", "2027-05-29"),
+    ("PA-16", "Losartan 50mg",          "BN17301",  26,  49.45, "2025-09-23", "2027-09-23"),
+    ("PA-17", "Levocetirizine 5mg",     "BN83930",  77,  35.46, "2024-09-07", "2027-09-07"),
+    ("PA-18", "Montelukast 10mg",       "BN32127", 232, 118.48, "2025-08-14", "2027-08-14"),
+    ("PA-19", "Domperidone 10mg",       "BN28507", 242,  27.10, "2025-02-22", "2028-02-22"),
+    ("PA-20", "Ranitidine 150mg",       "BN69446", 259,  20.38, "2025-10-13", "2028-10-12"),
+    ("PA-21", "Ciprofloxacin 500mg",    "BN48144", 250,  64.37, "2025-01-02", "2027-01-02"),  # Near expiry
+    ("PA-22", "Doxycycline 100mg",      "BN79697", 101,  55.70, "2024-11-05", "2026-11-05"),  # Expired
+    ("PA-23", "Cefixime 200mg",         "BN21683", 261, 102.61, "2025-10-28", "2027-10-28"),
+    ("PA-24", "Metronidazole 400mg",    "BN57359",  42,  16.46, "2025-09-23", "2028-09-22"),
+    ("PA-25", "Fluconazole 150mg",      "BN87002",  27,  41.04, "2026-04-08", "2029-04-07"),
+    ("PA-26", "Aspirin 75mg",           "BN97596", 153,  12.40, "2025-01-07", "2027-01-07"),  # Near expiry
+    ("PA-27", "Clopidogrel 75mg",       "BN95156", 101,  58.47, "2025-04-10", "2028-04-09"),
+    ("PA-28", "Telmisartan 40mg",       "BN42858", 176,  63.06, "2025-11-08", "2028-11-07"),
+    ("PA-29", "Glimepiride 2mg",        "BN94860", 192,  37.42, "2025-09-21", "2028-09-20"),
+    ("PA-30", "Folic Acid 5mg",         "BN55881",  98,  14.52, "2025-06-19", "2028-06-18"),
+    ("PA-31", "Vitamin B12 Tablet",     "BN53822", 275,  40.50, "2023-08-28", "2026-08-27"),  # Expired
+    ("PA-32", "Calcium + D3",           "BN72552", 154,  89.68, "2026-05-02", "2028-05-01"),
+    ("PA-33", "Zinc 50mg",              "BN90842", 274,  36.60, "2023-12-30", "2026-12-29"),  # Near expiry
+    ("PA-34", "Multivitamin Capsule",   "BN82510", 148,  76.65, "2026-01-25", "2029-01-24"),
+    ("PA-35", "Iron + Folic Acid",      "BN86866", 235,  34.42, "2024-10-07", "2027-10-07"),
+    ("PA-36", "Loperamide 2mg",         "BN33662",  31,  25.17, "2026-03-30", "2029-03-29"),
+    ("PA-37", "Ondansetron 4mg",        "BN27501",  66,  45.16, "2024-06-21", "2027-06-21"),
+    ("PA-38", "Salbutamol Syrup",       "BN81869",  28,  51.56, "2024-01-03", "2027-01-02"),  # Near expiry
+    ("PA-39", "Ambroxol Syrup",         "BN90189",  46,  68.61, "2026-03-06", "2029-03-05"),
+    ("PA-40", "Paracetamol Syrup 60ml", "BN55943", 217,  45.99, "2023-12-27", "2026-12-26"),  # Near expiry
+    ("PA-41", "Lactulose Solution",     "BN81728", 201, 120.34, "2025-08-22", "2027-08-22"),
+    ("PA-42", "Digene Antacid Syrup",   "BN22428", 161,  82.37, "2025-03-01", "2028-02-29"),
+    ("PA-43", "Dextromethorphan Syrup", "BN56087",  76,  71.42, "2024-10-11", "2026-10-11"),  # Expired
+    ("PA-44", "Budecort 1mg Inhaler",   "BN80567", 199, 159.48, "2026-02-13", "2029-02-12"),
+    ("PA-45", "Glucose D Powder",       "BN83906", 254,  47.06, "2026-05-23", "2028-05-22"),
+    ("PA-46", "Electral ORS",           "BN56021",  10,  23.72, "2025-07-29", "2027-07-29"),  # Low stock
+    ("PA-47", "Pantoprazole Sachet",    "BN80703",  82,  29.48, "2026-01-16", "2029-01-15"),
+    ("PA-48", "Levothyroxine 50mcg",    "BN66256", 231,  47.15, "2026-05-16", "2028-05-15"),
+    ("PA-49", "Dolo 650mg",             "BN59778", 206,  33.48, "2025-08-31", "2028-08-30"),
+    ("PA-50", "Doxoflow M",             "BN44055", 164, 129.95, "2025-12-26", "2028-12-25"),
 ]
 
-# Pharmacy B PDF (pages 9-18 expanded 80 entries; pages 1-8 match PHARMACY_A_ENTRIES)
-PHARMACY_B_EXPANDED_ENTRIES = [
-    # 1. Additional general medicines (10)
-    ("PB-1-01", "Ibuprofen", None, "Tablet", "Additional general medicines", "Pain, fever and inflammation", "OTC status varies; pharmacist screening"),
-    ("PB-1-02", "Diclofenac", None, "Tablet/gel", "Additional general medicines", "Pain and inflammation", "Usually Rx / product-dependent"),
-    ("PB-1-03", "Aspirin", None, "Tablet", "Additional general medicines", "Pain relief; some low-dose products have cardiovascular uses", "Use only as directed; age restrictions apply"),
-    ("PB-1-04", "Domperidone", None, "Tablet", "Additional general medicines", "Nausea and vomiting in selected cases", "Rx; safety restrictions apply"),
-    ("PB-1-05", "Ondansetron", None, "Tablet", "Additional general medicines", "Nausea and vomiting", "Rx"),
-    ("PB-1-06", "Dicyclomine", None, "Tablet", "Additional general medicines", "Abdominal cramps caused by intestinal spasm", "Rx / product-dependent"),
-    ("PB-1-07", "Simethicone", None, "Drops/tablet", "Additional general medicines", "Gas and bloating symptoms", "Product-dependent"),
-    ("PB-1-08", "Bisacodyl", None, "Tablet", "Additional general medicines", "Constipation", "OTC status varies"),
-    ("PB-1-09", "Psyllium husk", None, "Powder", "Additional general medicines", "Constipation / fibre supplementation", "Non-prescription product; label guidance"),
-    ("PB-1-10", "Multivitamin", None, "Tablet", "Additional general medicines", "Vitamin/mineral supplementation", "Product-dependent"),
-
-    # 2. Antibiotics and antibacterial medicines (10)
-    ("PB-2-01", "Amoxicillin", None, "Capsule/suspension", "Antibiotics and antibacterial medicines", "Certain susceptible bacterial infections", "Rx"),
-    ("PB-2-02", "Amoxicillin + clavulanic acid", None, "Tablet/suspension", "Antibiotics and antibacterial medicines", "Certain susceptible bacterial infections", "Rx"),
-    ("PB-2-03", "Azithromycin", None, "Tablet/suspension", "Antibiotics and antibacterial medicines", "Certain susceptible bacterial infections", "Rx"),
-    ("PB-2-04", "Cefixime", None, "Tablet/suspension", "Antibiotics and antibacterial medicines", "Certain susceptible bacterial infections", "Rx"),
-    ("PB-2-05", "Cefuroxime", None, "Tablet", "Antibiotics and antibacterial medicines", "Certain susceptible bacterial infections", "Rx"),
-    ("PB-2-06", "Cephalexin", None, "Capsule/suspension", "Antibiotics and antibacterial medicines", "Certain susceptible bacterial infections", "Rx"),
-    ("PB-2-07", "Doxycycline", None, "Capsule/tablet", "Antibiotics and antibacterial medicines", "Certain bacterial infections; selected other indications", "Rx"),
-    ("PB-2-08", "Metronidazole", None, "Tablet/suspension", "Antibiotics and antibacterial medicines", "Certain anaerobic bacterial and protozoal infections", "Rx"),
-    ("PB-2-09", "Nitrofurantoin", None, "Capsule/tablet", "Antibiotics and antibacterial medicines", "Certain urinary tract infections", "Rx"),
-    ("PB-2-10", "Clarithromycin", None, "Tablet/suspension", "Antibiotics and antibacterial medicines", "Certain susceptible bacterial infections", "Rx"),
-
-    # 3. Antifungal and antiviral medicines (10)
-    ("PB-3-01", "Fluconazole", None, "Capsule/tablet", "Antifungal and antiviral medicines", "Certain fungal infections", "Rx"),
-    ("PB-3-02", "Clotrimazole", None, "Cream", "Antifungal and antiviral medicines", "Fungal skin infections", "Product-dependent"),
-    ("PB-3-03", "Terbinafine", None, "Cream/tablet", "Antifungal and antiviral medicines", "Fungal skin or nail infections", "Tablet usually Rx"),
-    ("PB-3-04", "Miconazole", None, "Cream", "Antifungal and antiviral medicines", "Fungal skin infections", "Product-dependent"),
-    ("PB-3-05", "Nystatin", None, "Oral suspension/cream", "Antifungal and antiviral medicines", "Certain yeast infections", "Rx / product-dependent"),
-    ("PB-3-06", "Acyclovir", None, "Tablet/cream", "Antifungal and antiviral medicines", "Herpes virus infections", "Rx / product-dependent"),
-    ("PB-3-07", "Valacyclovir", None, "Tablet", "Antifungal and antiviral medicines", "Certain herpes virus infections", "Rx"),
-    ("PB-3-08", "Oseltamivir", None, "Capsule/suspension", "Antifungal and antiviral medicines", "Influenza in selected cases", "Rx"),
-    ("PB-3-09", "Povidone-iodine", None, "Solution/ointment", "Antifungal and antiviral medicines", "Topical antiseptic use", "Product-dependent"),
-    ("PB-3-10", "Mupirocin", None, "Ointment", "Antifungal and antiviral medicines", "Certain localized bacterial skin infections", "Usually Rx"),
-
-    # 4. Respiratory and allergy medicines (10)
-    ("PB-4-01", "Salbutamol", None, "Inhaler/respirator solution", "Respiratory and allergy medicines", "Relief of bronchospasm in asthma and other airway conditions", "Rx / product-dependent"),
-    ("PB-4-02", "Budesonide", None, "Inhaler/respirator solution", "Respiratory and allergy medicines", "Prevention/control of airway inflammation", "Rx"),
-    ("PB-4-03", "Beclometasone", None, "Inhaler/nasal spray", "Respiratory and allergy medicines", "Airway or nasal inflammation, depending on product", "Rx / product-dependent"),
-    ("PB-4-04", "Montelukast", None, "Tablet", "Respiratory and allergy medicines", "Asthma/allergic rhinitis in selected patients", "Rx"),
-    ("PB-4-05", "Fexofenadine", None, "Tablet/suspension", "Respiratory and allergy medicines", "Allergy symptoms", "Product-dependent"),
-    ("PB-4-06", "Levocetirizine", None, "Tablet/syrup", "Respiratory and allergy medicines", "Allergy symptoms", "Product-dependent"),
-    ("PB-4-07", "Chlorpheniramine", None, "Tablet/syrup", "Respiratory and allergy medicines", "Allergy symptoms", "Product-dependent; may cause drowsiness"),
-    ("PB-4-08", "Ipratropium", None, "Inhaler/nebule", "Respiratory and allergy medicines", "Bronchodilation in selected airway conditions", "Rx"),
-    ("PB-4-09", "Bromhexine", None, "Syrup/tablet", "Respiratory and allergy medicines", "Mucus-thinning for productive cough", "Product-dependent"),
-    ("PB-4-10", "N-acetylcysteine", None, "Syrup/tablet", "Respiratory and allergy medicines", "Mucus-thinning in selected respiratory conditions", "Product-dependent"),
-
-    # 5. Digestive-system medicines (10)
-    ("PB-5-01", "Rabeprazole", None, "Tablet", "Digestive-system medicines", "Acid reflux and acid-related disorders", "Usually Rx"),
-    ("PB-5-02", "Esomeprazole", None, "Capsule/tablet", "Digestive-system medicines", "Acid reflux and acid-related disorders", "Usually Rx"),
-    ("PB-5-03", "Omeprazole", None, "Capsule/tablet", "Digestive-system medicines", "Acid reflux and acid-related disorders", "Product-dependent"),
-    ("PB-5-04", "Sucralfate", None, "Suspension/tablet", "Digestive-system medicines", "Certain ulcer-related conditions", "Rx"),
-    ("PB-5-05", "Ranitidine", None, "Tablet/syrup", "Digestive-system medicines", "Acid-related disorders; availability/regulatory status varies", "Verify current local status"),
-    ("PB-5-06", "Racecadotril", None, "Capsule/sachet", "Digestive-system medicines", "Diarrhoea symptom management in selected cases", "Product-dependent"),
-    ("PB-5-07", "Polyethylene glycol", None, "Powder", "Digestive-system medicines", "Constipation", "Product-dependent"),
-    ("PB-5-08", "Sodium picosulfate", None, "Drops/tablet", "Digestive-system medicines", "Constipation", "Product-dependent"),
-    ("PB-5-09", "Mesalazine", None, "Tablet/suppository", "Digestive-system medicines", "Inflammatory bowel disease", "Rx"),
-    ("PB-5-10", "Ursodeoxycholic acid", None, "Tablet/capsule", "Digestive-system medicines", "Selected bile/liver conditions", "Rx"),
-
-    # 6. Skin and topical products (10)
-    ("PB-6-01", "Hydrocortisone", None, "Cream/ointment", "Skin and topical products", "Mild inflammatory skin conditions", "Strength/status varies"),
-    ("PB-6-02", "Betamethasone", None, "Cream/ointment", "Skin and topical products", "Inflammatory skin conditions", "Rx / product-dependent"),
-    ("PB-6-03", "Clobetasol", None, "Cream/ointment", "Skin and topical products", "Selected inflammatory skin conditions", "Rx"),
-    ("PB-6-04", "Ketoconazole", None, "Cream/shampoo", "Skin and topical products", "Fungal skin conditions and dandruff", "Product-dependent"),
-    ("PB-6-05", "Permethrin", None, "Cream/lotion", "Skin and topical products", "Scabies or lice, depending on formulation", "Product-dependent"),
-    ("PB-6-06", "Benzoyl peroxide", None, "Gel/wash", "Skin and topical products", "Acne", "Product-dependent"),
-    ("PB-6-07", "Adapalene", None, "Gel/cream", "Skin and topical products", "Acne", "Product-dependent / Rx status varies"),
-    ("PB-6-08", "Silver sulfadiazine", None, "Cream", "Skin and topical products", "Selected burn-wound care", "Rx / clinician-directed"),
-    ("PB-6-09", "Zinc oxide", None, "Cream/ointment", "Skin and topical products", "Skin barrier protection and irritation", "Non-prescription product"),
-    ("PB-6-10", "Luliconazole", None, "Cream", "Skin and topical products", "Fungal skin infections", "Usually Rx / product-dependent"),
-
-    # 7. Additional eye and ear products (10)
-    ("PB-7-01", "Timolol", None, "Eye drops", "Additional eye and ear products", "Glaucoma / raised eye pressure", "Rx"),
-    ("PB-7-02", "Latanoprost", None, "Eye drops", "Additional eye and ear products", "Glaucoma / raised eye pressure", "Rx"),
-    ("PB-7-03", "Tobramycin", None, "Eye drops/ointment", "Additional eye and ear products", "Certain bacterial eye infections", "Rx"),
-    ("PB-7-04", "Moxifloxacin", None, "Eye drops", "Additional eye and ear products", "Certain bacterial eye infections", "Rx"),
-    ("PB-7-05", "Ketotifen", None, "Eye drops", "Additional eye and ear products", "Allergic eye itching", "Product-dependent"),
-    ("PB-7-06", "Dexamethasone", None, "Eye drops", "Additional eye and ear products", "Eye inflammation in selected cases", "Rx; specialist supervision"),
-    ("PB-7-07", "Ciprofloxacin", None, "Ear drops", "Additional eye and ear products", "Certain bacterial ear infections", "Rx / product-dependent"),
-    ("PB-7-08", "Ofloxacin", None, "Ear drops", "Additional eye and ear products", "Certain bacterial ear infections", "Rx / product-dependent"),
-    ("PB-7-09", "Clotrimazole", None, "Ear drops/solution", "Additional eye and ear products", "Selected fungal ear infections", "Clinician-directed"),
-    ("PB-7-10", "Glycerin", None, "Ear drops", "Additional eye and ear products", "Earwax softening in selected products", "Product-dependent"),
-
-    # 8. Additional vitamins and supplements (10)
-    ("PB-8-01", "Vitamin D3 (cholecalciferol)", None, "Tablet/drop", "Additional vitamins and supplements", "Vitamin D supplementation", "Product-dependent"),
-    ("PB-8-02", "Vitamin B12 (cyanocobalamin)", None, "Tablet/injection", "Additional vitamins and supplements", "Vitamin B12 deficiency", "Product-dependent"),
-    ("PB-8-03", "Folic acid", None, "Tablet", "Additional vitamins and supplements", "Folate deficiency and selected preventive uses", "Product-dependent"),
-    ("PB-8-04", "Iron + folic acid", None, "Tablet/syrup", "Additional vitamins and supplements", "Iron/folate supplementation", "Product-dependent"),
-    ("PB-8-05", "Calcium + vitamin D3", None, "Tablet/suspension", "Additional vitamins and supplements", "Calcium and vitamin D supplementation", "Product-dependent"),
-    ("PB-8-06", "Magnesium supplement", None, "Tablet/powder", "Additional vitamins and supplements", "Magnesium supplementation", "Product-dependent"),
-    ("PB-8-07", "Potassium chloride", None, "Tablet/solution", "Additional vitamins and supplements", "Potassium replacement when prescribed", "Rx / careful monitoring"),
-    ("PB-8-08", "Thiamine (vitamin B1)", None, "Tablet/injection", "Additional vitamins and supplements", "Thiamine deficiency", "Product-dependent"),
-    ("PB-8-09", "Pyridoxine (vitamin B6)", None, "Tablet", "Additional vitamins and supplements", "Vitamin B6 supplementation or selected prescribed uses", "Product-dependent"),
-    ("PB-8-10", "Zinc", None, "Tablet/syrup", "Additional vitamins and supplements", "Zinc supplementation", "Product-dependent"),
+# Pharmacy B - Medicine Inventory (50 Medicines: 3 expired, 5 near expiry, 42 safe)
+PHARMACY_B_DATASET = [
+    ("PB-01", "Azithromycin 500mg",       "PB28830", 161, 106.42, "2024-12-09", "2026-12-09"),  # Near expiry
+    ("PB-02", "Antacid Gel 170ml",        "PB37207", 297,  93.28, "2025-09-23", "2027-09-23"),
+    ("PB-03", "Montelukast 10mg",         "PB25363", 195, 116.23, "2026-01-15", "2028-01-15"),
+    ("PB-04", "Ibuprofen 400mg",          "PB11461",  34,  31.48, "2026-02-15", "2028-02-15"),
+    ("PB-05", "Electral ORS",             "PB62351", 207,  23.79, "2025-04-06", "2028-04-05"),
+    ("PB-06", "Loperamide 2mg",           "PB33753",  29,  25.02, "2024-07-30", "2027-07-30"),
+    ("PB-07", "Folic Acid 5mg",           "PB40174", 169,  14.50, "2025-07-25", "2028-07-24"),
+    ("PB-08", "Cefixime 200mg",           "PB51147", 121, 107.77, "2024-08-13", "2027-08-13"),
+    ("PB-09", "Cetirizine 10mg",          "PB48846", 234,  25.63, "2026-05-24", "2028-05-23"),
+    ("PB-10", "Paracetamol Syrup 60ml",   "PB43582",  45,  44.01, "2025-07-02", "2028-07-01"),
+    ("PB-11", "Zinc 50mg",                "PB79893",  75,  37.55, "2026-08-28", "2028-08-27"),
+    ("PB-12", "Dextromethorphan Syrup",   "PB63652",  91,  70.43, "2026-02-18", "2028-02-18"),
+    ("PB-13", "Crocin Advance",           "PB97396", 235,  27.14, "2026-01-20", "2029-01-19"),
+    ("PB-14", "Paracetamol 500mg",        "PB10565", 191,  18.35, "2025-04-15", "2028-04-14"),
+    ("PB-15", "Vitamin B12 Tablet",       "PB97532",  97,  43.22, "2026-03-08", "2029-03-07"),
+    ("PB-16", "Ciprofloxacin 500mg",      "PB40308", 219,  67.34, "2026-04-20", "2029-04-19"),
+    ("PB-17", "Povidone Iodine Solution", "PB24723", 266,  60.19, "2024-04-30", "2027-04-30"),
+    ("PB-18", "Ranitidine 150mg",         "PB98119",  95,  20.02, "2026-03-10", "2028-03-09"),
+    ("PB-19", "Lactulose Solution",       "PB44590", 223, 114.63, "2024-11-23", "2027-11-23"),
+    ("PB-20", "Amoxicillin 500mg",        "PB92797", 157,  82.45, "2024-01-13", "2027-01-12"),  # Near expiry
+    ("PB-21", "Diclofenac 50mg",          "PB19905",  26,  29.29, "2026-03-07", "2028-03-06"),
+    ("PB-22", "Domperidone 10mg",         "PB83037", 161,  25.20, "2026-05-10", "2028-05-09"),
+    ("PB-23", "Ondansetron 4mg",          "PB32577", 145,  45.82, "2025-06-09", "2028-06-08"),
+    ("PB-24", "Glimepiride 2mg",          "PB60989", 224,  38.24, "2025-07-28", "2028-07-27"),
+    ("PB-25", "Glucose D Powder",         "PB42789", 116,  43.98, "2026-04-30", "2028-04-29"),
+    ("PB-26", "Omeprazole 20mg",          "PB72806", 253,  45.74, "2023-09-12", "2026-09-11"),  # Expired
+    ("PB-27", "Cough Syrup 100ml",        "PB70276", 277,  74.22, "2024-12-28", "2027-12-28"),
+    ("PB-28", "Doxycycline 100mg",        "PB54007",  12,  55.38, "2024-07-09", "2027-07-09"),  # Low stock
+    ("PB-29", "Telmisartan 40mg",         "PB11573", 173,  61.47, "2024-12-20", "2026-12-20"),  # Near expiry
+    ("PB-30", "Salbutamol Syrup",         "PB16224", 213,  49.59, "2025-12-20", "2028-12-19"),
+    ("PB-31", "Pantoprazole Sachet",      "PB82779", 159,  28.98, "2025-12-18", "2027-12-18"),
+    ("PB-32", "Metronidazole 400mg",      "PB64751", 127,  16.49, "2026-04-09", "2029-04-08"),
+    ("PB-33", "Amlodipine 5mg",           "PB45756", 151,  39.61, "2024-10-19", "2027-10-19"),
+    ("PB-34", "Clopidogrel 75mg",         "PB83269",  98,  59.17, "2025-11-15", "2027-11-15"),
+    ("PB-35", "Becosules Capsule",        "PB98850",  68,  51.12, "2025-07-19", "2027-07-19"),
+    ("PB-36", "Calcium + D3",             "PB81476",  54,  83.89, "2024-09-27", "2027-09-27"),
+    ("PB-37", "Digene Antacid Syrup",     "PB56387", 128,  82.94, "2023-09-20", "2026-09-19"),  # Expired
+    ("PB-38", "Iron + Folic Acid",        "PB54576",  37,  35.34, "2025-01-11", "2027-01-11"),  # Near expiry
+    ("PB-39", "Multivitamin Capsule",     "PB34640", 167,  72.60, "2023-08-13", "2026-08-12"),  # Expired
+    ("PB-40", "Dolo 650mg",               "PB94266", 276,  32.74, "2026-09-17", "2028-09-16"),
+    ("PB-41", "Levocetirizine 5mg",       "PB99407",  59,  35.99, "2026-05-17", "2028-05-16"),
+    ("PB-42", "ORS Powder",               "PB88965",  51,  22.83, "2025-07-25", "2028-07-24"),
+    ("PB-43", "Vitamin C 500mg",          "PB58905", 139,  29.44, "2026-07-25", "2028-07-24"),
+    ("PB-44", "Losartan 50mg",            "PB12671", 163,  50.15, "2025-06-07", "2028-06-06"),
+    ("PB-45", "Atorvastatin 10mg",        "PB82876", 161,  89.09, "2025-02-13", "2028-02-13"),
+    ("PB-46", "Rabeprazole 20mg",         "PB15281", 191,  57.98, "2025-07-10", "2027-07-10"),
+    ("PB-47", "Ambroxol Syrup",           "PB97030", 177,  70.08, "2025-04-04", "2028-04-03"),
+    ("PB-48", "Metformin 500mg",          "PB89989", 126,  28.74, "2026-01-29", "2028-01-29"),
+    ("PB-49", "Fluconazole 150mg",        "PB62369", 224,  40.05, "2025-02-16", "2028-02-16"),
+    ("PB-50", "Aspirin 75mg",             "PB78697", 218,  12.59, "2023-12-18", "2026-12-17"),  # Near expiry
 ]
 
 
-def _import_entries_for_pharmacy(pharmacy_obj, entries, data_source):
-    """
-    Imports catalog entries into a specific pharmacy without inventing missing fields
-    and without duplicating existing records.
-    """
+def _purge_legacy_dataset():
+    """Removes any records belonging to the superseded legacy dataset."""
+    old_batches = Inventory.query.filter(
+        (Inventory.data_source.in_(OLD_DATA_SOURCES)) |
+        (Inventory.batch_number.in_(OLD_SAMPLE_BATCHES))
+    ).all()
+
+    if not old_batches:
+        return 0
+
+    removed = 0
+    for inv in old_batches:
+        db.session.delete(inv)
+        removed += 1
+    db.session.flush()
+
+    # Delete Medicine records that no longer have any inventory batches
+    orphans = Medicine.query.filter(~Medicine.inventory_batches.any()).all()
+    for med in orphans:
+        db.session.delete(med)
+    db.session.commit()
+    return removed
+
+
+def _import_dataset_for_pharmacy(pharmacy_obj, rows, data_source):
     inserted = 0
     skipped_duplicates = 0
 
-    for item_no, name, strength, form, category, indication, rx_status in entries:
-        # Find or create Medicine matched accurately by (name, strength, form)
+    for item_no, label, batch_number, qty, price, mfg_str, exp_str in rows:
+        name, generic_name, strength, form, category, indication, rx_required, rx_status = MEDICINE_CATALOG[label]
+
         med = Medicine.query.filter_by(name=name, strength=strength, form=form).first()
         if not med:
             med = Medicine(
                 name=name,
-                generic_name=name,
+                generic_name=generic_name,
                 category=category,
                 strength=strength,
                 form=form,
                 indication=indication,
                 prescription_status=rx_status,
-                prescription_required=_is_rx_required(rx_status),
+                prescription_required=rx_required,
                 image_url=resolve_medicine_image(name, strength, form),
             )
             db.session.add(med)
             db.session.flush()
         else:
-            # Enrich missing metadata if medicine appeared under an additional section
-            if not med.category and category:
-                med.category = category
-            elif med.category and category and category not in med.category:
-                med.category = f"{med.category}; {category}"
-            if not med.indication and indication:
-                med.indication = indication
-            elif med.indication and indication and indication not in med.indication:
-                med.indication = f"{med.indication}; {indication}"
-            if not med.prescription_status and rx_status:
-                med.prescription_status = rx_status
+            med.generic_name = generic_name
+            med.category = category
+            med.indication = indication
+            med.prescription_status = rx_status
+            med.prescription_required = rx_required
+            med.image_url = resolve_medicine_image(name, strength, form)
 
-        # Check duplicate for this pharmacy & medicine & data_source (or catalog_item_no)
         existing_inv = Inventory.query.filter_by(
             pharmacy_id=pharmacy_obj.id,
             medicine_id=med.id,
-            data_source=data_source
+            batch_number=batch_number,
         ).first()
-
         if existing_inv:
             skipped_duplicates += 1
             continue
-
-        missing = []
-        if not strength:
-            missing.append('strength')
-        missing.extend(['batch_number', 'quantity', 'price', 'expiry_date'])
 
         inv = Inventory(
             medicine_id=med.id,
             pharmacy_id=pharmacy_obj.id,
             catalog_item_no=item_no,
-            batch_number=None,
-            quantity=None,
-            price=None,
-            mfg_date=None,
-            expiry_date=None,
+            batch_number=batch_number,
+            quantity=int(qty),
+            price=float(price),
+            mfg_date=date.fromisoformat(mfg_str) if mfg_str else None,
+            expiry_date=date.fromisoformat(exp_str),
             data_source=data_source,
-            missing_fields=json.dumps(missing),
+            missing_fields=json.dumps([]),
         )
         db.session.add(inv)
         inserted += 1
@@ -275,8 +274,8 @@ def _import_entries_for_pharmacy(pharmacy_obj, entries, data_source):
 
 def import_pharmacy_catalogs():
     """
-    Imports Pharmacy A (58 PDF entries) and Pharmacy B (138 PDF entries: 58 base + 80 expanded)
-    separately into MySQL/SQLite. Idempotent: prevents duplicate imports.
+    Replaces any legacy dataset and idempotently imports the verified
+    50-medicine Pharmacy A and 50-medicine Pharmacy B inventories.
     """
     pharma_a = Pharmacy.query.filter_by(name='Pharmacy A').first()
     pharma_b = Pharmacy.query.filter_by(name='Pharmacy B').first()
@@ -284,18 +283,13 @@ def import_pharmacy_catalogs():
     if not pharma_a or not pharma_b:
         raise RuntimeError("Pharmacy A and Pharmacy B must exist before importing catalogs.")
 
-    res_a = _import_entries_for_pharmacy(pharma_a, PHARMACY_A_ENTRIES, 'Pharmacy A PDF')
-
-    # Pharmacy B PDF contains pages 1-8 (same 58 base items) + pages 9-18 (80 expanded items)
-    pharmacy_b_all = [
-        (f"PB-BASE-{idx+1:02d}", e[1], e[2], e[3], e[4], e[5], e[6])
-        for idx, e in enumerate(PHARMACY_A_ENTRIES)
-    ] + PHARMACY_B_EXPANDED_ENTRIES
-
-    res_b = _import_entries_for_pharmacy(pharma_b, pharmacy_b_all, 'Pharmacy B PDF')
+    purged = _purge_legacy_dataset()
+    res_a = _import_dataset_for_pharmacy(pharma_a, PHARMACY_A_DATASET, 'Pharmacy A Inventory v2')
+    res_b = _import_dataset_for_pharmacy(pharma_b, PHARMACY_B_DATASET, 'Pharmacy B Inventory v2')
     db.session.commit()
 
     return {
+        'purged_legacy': purged,
         'pharmacy_a': res_a,
-        'pharmacy_b': res_b
+        'pharmacy_b': res_b,
     }

@@ -21,6 +21,20 @@ def _sanitize_image_url(raw_url):
     return None
 
 
+def _apply_medicine_search_filter(medicine_query, query):
+    tokens = [tok for tok in (query or '').strip().split() if tok]
+    for tok in tokens:
+        pattern = f'%{tok}%'
+        medicine_query = medicine_query.filter(
+            (Medicine.name.ilike(pattern)) |
+            (Medicine.generic_name.ilike(pattern)) |
+            (Medicine.category.ilike(pattern)) |
+            (Medicine.strength.ilike(pattern)) |
+            (Medicine.form.ilike(pattern))
+        )
+    return medicine_query
+
+
 @medicine_bp.route('', methods=['GET'])
 def list_medicines():
     """List and search medicines across catalog."""
@@ -28,13 +42,7 @@ def list_medicines():
     medicine_query = Medicine.query
 
     if query:
-        medicine_query = medicine_query.filter(
-            (Medicine.name.ilike(f'%{query}%')) |
-            (Medicine.generic_name.ilike(f'%{query}%')) |
-            (Medicine.category.ilike(f'%{query}%')) |
-            (Medicine.strength.ilike(f'%{query}%')) |
-            (Medicine.form.ilike(f'%{query}%'))
-        )
+        medicine_query = _apply_medicine_search_filter(medicine_query, query)
 
     medicines = medicine_query.order_by(Medicine.name.asc()).all()
     return jsonify({'medicines': [m.to_dict() for m in medicines]}), 200
@@ -355,13 +363,7 @@ def compare_medicines():
 
     medicine_query = Medicine.query
     if query:
-        medicine_query = medicine_query.filter(
-            (Medicine.name.ilike(f'%{query}%')) |
-            (Medicine.generic_name.ilike(f'%{query}%')) |
-            (Medicine.category.ilike(f'%{query}%')) |
-            (Medicine.strength.ilike(f'%{query}%')) |
-            (Medicine.form.ilike(f'%{query}%'))
-        )
+        medicine_query = _apply_medicine_search_filter(medicine_query, query)
 
     all_medicines = medicine_query.order_by(Medicine.name.asc()).all()
     med_ids = [m.id for m in all_medicines]

@@ -84,15 +84,15 @@ export function MedicineComparePage() {
     }
 
     if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase();
-      return baseList.filter(
-        m =>
-          m.isUncertain ||
-          (m.name || '').toLowerCase().includes(q) ||
-          (m.generic_name || '').toLowerCase().includes(q) ||
-          (m.category || '').toLowerCase().includes(q) ||
-          (m.strength || '').toLowerCase().includes(q)
-      );
+      const tokens = searchTerm.toLowerCase().trim().split(/\s+/).filter(Boolean);
+      return baseList.filter((m) => {
+        if (m.isUncertain) return true;
+        const haystack = [m.name, m.generic_name, m.category, m.strength, m.form]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return tokens.every((tok) => haystack.includes(tok));
+      });
     }
 
     return baseList;

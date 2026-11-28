@@ -8,6 +8,7 @@ from models.inventory import Inventory
 from models.pharmacy import Pharmacy
 from models.medicine import Medicine
 from utils.auth_middleware import token_required, admin_required
+from utils.medicine_images import resolve_medicine_image
 
 
 @inventory_bp.route('', methods=['GET'])
@@ -23,13 +24,16 @@ def list_inventory():
             query = query.filter(Inventory.pharmacy_id == pharma.id)
 
     if search:
-        query = query.filter(
-            (Medicine.name.ilike(f'%{search}%')) |
-            (Medicine.generic_name.ilike(f'%{search}%')) |
-            (Medicine.category.ilike(f'%{search}%')) |
-            (Medicine.strength.ilike(f'%{search}%')) |
-            (Inventory.batch_number.ilike(f'%{search}%'))
-        )
+        for tok in [t for t in search.split() if t]:
+            pattern = f'%{tok}%'
+            query = query.filter(
+                (Medicine.name.ilike(pattern)) |
+                (Medicine.generic_name.ilike(pattern)) |
+                (Medicine.category.ilike(pattern)) |
+                (Medicine.strength.ilike(pattern)) |
+                (Medicine.form.ilike(pattern)) |
+                (Inventory.batch_number.ilike(pattern))
+            )
 
     inventory_items = query.order_by(Inventory.created_at.desc(), Inventory.id.asc()).all()
     return jsonify({'inventory': [item.to_dict() for item in inventory_items]}), 200
@@ -132,16 +136,22 @@ def update_inventory(current_user, inv_id):
     # Allow updating linked medicine metadata if provided from edit modal
     med = inv.medicine
     if med:
+        med_identity_changed = False
         if 'name' in data and str(data['name']).strip():
             med.name = str(data['name']).strip()
+            med_identity_changed = True
         if 'generic_name' in data:
             med.generic_name = (data['generic_name'] or '').strip() or None
         if 'strength' in data:
             med.strength = (data['strength'] or '').strip() or None
+            med_identity_changed = True
         if 'form' in data and str(data['form']).strip():
             med.form = str(data['form']).strip()
+            med_identity_changed = True
         if 'prescription_required' in data:
             med.prescription_required = bool(data['prescription_required'])
+        if med_identity_changed or not med.image_url:
+            med.image_url = resolve_medicine_image(med.name, med.strength, med.form)
 
     # Recompute missing_fields dynamically
     missing = []

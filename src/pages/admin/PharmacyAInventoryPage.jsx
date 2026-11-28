@@ -22,12 +22,15 @@ export function PharmacyAInventoryPage() {
     fetchPharmacyAInventory().catch(() => {});
   }, [fetchPharmacyAInventory]);
 
-  const pharmacyAMedicines = pharmacyAInventory.filter(
-    m =>
-      m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (m.batchNumber || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (m.category || '').toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const tokens = searchTerm.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const pharmacyAMedicines = pharmacyAInventory.filter((m) => {
+    if (tokens.length === 0) return true;
+    const haystack = [m.name, m.strength, m.form, m.batchNumber, m.genericName, m.category]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return tokens.every((tok) => haystack.includes(tok));
+  });
 
   const startInlineEdit = (med) => {
     setEditError('');

@@ -64,7 +64,7 @@ def resolve_palette(name, category=None):
         return CATEGORY_PALETTES["antibiotic"]
     if any(k in text for k in ("diabetes", "metformin", "glimepiride", "gliclazide", "glipizide", "sitagliptin", "linagliptin", "vildagliptin", "empagliflozin", "dapagliflozin", "pioglitazone", "insulin")):
         return CATEGORY_PALETTES["diabetes"]
-    if any(k in text for k in ("blood-pressure", "amlodipine", "telmisartan", "losartan", "olmesartan", "enalapril", "ramipril", "atenolol", "metoprolol", "hydrochlorothiazide", "chlorthalidone", "aspirin")):
+    if any(k in text for k in ("blood-pressure", "blood pressure", "amlodipine", "telmisartan", "losartan", "olmesartan", "enalapril", "ramipril", "atenolol", "metoprolol", "hydrochlorothiazide", "chlorthalidone", "aspirin", "clopidogrel")):
         return CATEGORY_PALETTES["blood-pressure"]
     if any(k in text for k in ("atorvastatin", "cardio")):
         return CATEGORY_PALETTES["cardio"]
@@ -72,21 +72,21 @@ def resolve_palette(name, category=None):
         return CATEGORY_PALETTES["thyroid"]
     if any(k in text for k in ("period", "mefenamic", "hyoscine")):
         return CATEGORY_PALETTES["period"]
-    if any(k in text for k in ("respiratory", "salbutamol", "budesonide", "beclometasone", "montelukast", "ipratropium", "bromhexine", "acetylcysteine", "cough", "dextromethorphan", "guaifenesin", "ambroxol")):
+    if any(k in text for k in ("respiratory", "salbutamol", "budesonide", "budecort", "doxoflow", "beclometasone", "montelukast", "ipratropium", "bromhexine", "acetylcysteine", "cough", "dextromethorphan", "guaifenesin", "ambroxol")):
         return CATEGORY_PALETTES["respiratory"]
     if any(k in text for k in ("allergy", "cetirizine", "loratadine", "fexofenadine", "levocetirizine", "chlorpheniramine")):
         return CATEGORY_PALETTES["allergy"]
-    if any(k in text for k in ("digestive", "pantoprazole", "omeprazole", "rabeprazole", "esomeprazole", "famotidine", "antacid", "sucralfate", "ranitidine", "loperamide", "domperidone", "ondansetron", "lactulose", "dicyclomine", "simethicone", "bisacodyl", "psyllium", "racecadotril", "mesalazine", "ursodeoxycholic")):
+    if any(k in text for k in ("digestive", "pantoprazole", "omeprazole", "rabeprazole", "esomeprazole", "famotidine", "antacid", "digene", "sucralfate", "ranitidine", "loperamide", "domperidone", "ondansetron", "lactulose", "dicyclomine", "simethicone", "bisacodyl", "psyllium", "racecadotril", "mesalazine", "ursodeoxycholic")):
         return CATEGORY_PALETTES["digestive"]
     if any(k in text for k in ("antifungal", "antiviral", "fluconazole", "clotrimazole", "terbinafine", "miconazole", "nystatin", "acyclovir", "valacyclovir", "oseltamivir", "ketoconazole", "luliconazole")):
         return CATEGORY_PALETTES["antifungal"]
-    if any(k in text for k in ("skin", "topical", "hydrocortisone", "betamethasone", "clobetasol", "permethrin", "benzoyl", "adapalene", "silver sulfadiazine", "zinc oxide", "calamine", "povidone", "mupirocin", "diclofenac gel")):
+    if any(k in text for k in ("skin", "topical", "antiseptic", "wound", "hydrocortisone", "betamethasone", "clobetasol", "permethrin", "benzoyl", "adapalene", "silver sulfadiazine", "zinc oxide", "calamine", "povidone", "mupirocin")):
         return CATEGORY_PALETTES["skin"]
     if any(k in text for k in ("eye", "ear", "timolol", "latanoprost", "tobramycin", "moxifloxacin", "ketotifen", "dexamethasone", "carboxymethylcellulose", "olopatadine", "carbamide", "ofloxacin", "glycerin")):
         return CATEGORY_PALETTES["eye"]
-    if any(k in text for k in ("vitamin", "calcium", "ferrous", "iron", "folic", "zinc", "magnesium", "potassium", "thiamine", "pyridoxine", "multivitamin", "ors")):
+    if any(k in text for k in ("vitamin", "hydration", "electrolyte", "calcium", "ferrous", "iron", "folic", "zinc", "magnesium", "potassium", "thiamine", "pyridoxine", "multivitamin", "becosules", "ors", "electral", "glucose")):
         return CATEGORY_PALETTES["vitamin"]
-    if any(k in text for k in ("paracetamol", "ibuprofen", "naproxen", "diclofenac")):
+    if any(k in text for k in ("paracetamol", "dolo", "crocin", "ibuprofen", "naproxen", "diclofenac", "pain", "fever")):
         return CATEGORY_PALETTES["pain"]
     return CATEGORY_PALETTES["default"]
 
